@@ -4,7 +4,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableParallel, RunnableBranch, RunnableLambda
 
 load_dotenv()
-llm = ChatGroq(model="openai/gpt-oss-120b")
+llm = ChatGroq(model="openai/gpt-oss-120b", max_tokens=4000)
 
 call_a = {
     "title": "Call-A",
@@ -65,7 +65,7 @@ call_b = {
     "required": ["usecase", "budget", "non_negotiable_specs"]
 }
 
-# "candidate" means: a product that might be a good recommendation, extracted from messy search results, 
+# "candidate" means: a product that might be a good recommendation, extracted from messy search results,
 # but not yet verified as complete or price-checked.
 call_c = {  # Step 3: candidate extraction
     "title": "Candidate-Extraction",
@@ -101,9 +101,23 @@ call_c = {  # Step 3: candidate extraction
     "required": ["candidates"]
 }
 
+call_d = {
+    "title": "Spec-Merge",
+    "type": "object",
+    "properties": {
+        "new_specs": {
+            "type": "object",
+            "additionalProperties": {"type": "string"},
+            "description": "Dict of spec name to value, containing ONLY specs found in the follow-up text that are not already present in known_specs. Do not repeat specs already known."
+        }
+    },
+    "required": ["new_specs"]
+}
+
 str_model_call_a = llm.with_structured_output(call_a)
 str_model_call_b = llm.with_structured_output(call_b)
 str_model_call_c = llm.with_structured_output(call_c)
+str_model_call_d = llm.with_structured_output(call_d)
 
 prompt1 = PromptTemplate(
     template="""Analyze the following user query -> {query},
@@ -117,20 +131,43 @@ prompt2 = PromptTemplate(
     template="""Extract technical specs/requirements for the product -> {category}, user's budget is -> {budget} and usecase is -> {usecase} \n 
     After extracting specs, categorise specs into negotiable and non-negotiable specs, 
     non-negotiable specs based on specs which are highly important and can't be neglected for given usecase, and 
-    negotiable based on specs that are less important, which can be ignored if there budget constraints""",
+    negotiable based on specs that are less important, which can be ignored if there budget constraints
+    Respond only by populating the required schema fields. Do not write a conversational reply, markdown table, or explanation text,
+    output must go through the structured tool call only. You must respond only via the structured tool call, never as freeform conversational text.""",
     input_variables=['category', 'budget', 'usecase']
 )
 
 prompt3 = PromptTemplate(
     template="""You are given raw web search results for a product search, and the required specs.
     Required non-negotiable specs: {required_specs}
-    Raw search results: {raw_results} 
+    Raw search results: {raw_results}
     Task:
-    1. Identify distinct, specific products mentioned (ignore results that are generic articles, listing pages with no single identifiable product, or reviews with no product data).
+    1. Identify distinct, specific products mentioned (ignore results that are generic articles, discussion forums, Q&A sites, listing pages with no single identifiable product, or reviews with no product data).
     2. For each distinct product, extract whatever specs are actually visible in the result.
     3. Mark specs_complete as true only if every required non-negotiable spec is confirmed for that product; otherwise false.
-    4. Do not invent or assume specs that are not present in the text.""",
+    4. Do not invent or assume specs that are not present in the text.
+    5. Only extract products that are literally named in the provided raw_results text, and must not supplement with outside knowledge at all.
+    6. Extract at most 4 candidates total. If more than 4 distinct products are found, choose the 4 whose visible specs most closely match the required non-negotiable specs.
+    7. Ignore products that are clearly a different category than requested (e.g. a desktop PC when a laptop was requested), even if some specs overlap.
+    8. Do not include a candidate if you cannot extract at least 2 concrete specs for it from the text. A product name alone, with no specs, is not a valid candidate — skip it entirely rather than including it with an empty known_specs.""",
     input_variables=['required_specs', 'raw_results']
+)
+
+prompt4 = PromptTemplate(
+    template="""You are given a product name, the specs already known about it, and new raw search text about the same product.
+
+    Product: {product_name}
+    Already known specs: {known_specs}
+    Required specs (for reference): {required_specs}
+    Raw follow-up search text: {follow_up_text}
+
+    Task:
+    1. Read the raw follow-up text and identify any spec values for this exact product that are NOT already present in "Already known specs".
+    2. Only extract specs that are literally stated in the follow-up text — do not invent or assume values.
+    3. Only include specs relevant to the required_specs list; ignore irrelevant details (price, reviews, accessories, etc.) unless they match a required spec.
+    4. Respond only through the structured tool call. Do not write conversational text.""",
+    input_variables=['product_name', 'known_specs',
+                     'required_specs', 'follow_up_text']
 )
 
 call_a_chain = prompt1 | str_model_call_a
@@ -145,9 +182,9 @@ branch_chain = RunnableBranch(
 final_chain = call_a_chain | branch_chain
 
 # Case 1: everything present
-result1 = final_chain.invoke(
-    {"query": "I want to buy a laptop for Machine Learning work, budget around 80000 INR"})
-print(result1)
+# result1 = final_chain.invoke(
+#     {"query": "I want to buy a laptop for Machine Learning work, budget around 80000 INR"})
+# print(result1)
 
 # # Case 2: use case present, budget missing
 # result2 = final_chain.invoke(
