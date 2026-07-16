@@ -65,6 +65,8 @@ call_b = {
     "required": ["usecase", "budget", "non_negotiable_specs"]
 }
 
+# "candidate" means: a product that might be a good recommendation, extracted from messy search results, 
+# but not yet verified as complete or price-checked.
 call_c = {  # Step 3: candidate extraction
     "title": "Candidate-Extraction",
     "type": "object",
