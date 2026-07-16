@@ -1,7 +1,6 @@
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableParallel, RunnableBranch, RunnableLambda
 
 load_dotenv()
@@ -66,8 +65,43 @@ call_b = {
     "required": ["usecase", "budget", "non_negotiable_specs"]
 }
 
+call_c = {  # Step 3: candidate extraction
+    "title": "Candidate-Extraction",
+    "type": "object",
+    "properties": {
+        "candidates": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "product_name": {
+                        "type": "string",
+                        "description": "Exact, specific product name/model as it appears in results (brand + model number if available)"
+                    },
+                    "known_specs": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                        "description": "Any specs visible in the search result for this product"
+                    },
+                    "source_url": {
+                        "type": "string",
+                        "description": "URL where this product was found"
+                    },
+                    "specs_complete": {
+                        "type": "boolean",
+                        "description": "True only if all non-negotiable specs from requirements are confirmed for this product"
+                    }
+                },
+                "required": ["product_name", "known_specs", "specs_complete"]
+            }
+        }
+    },
+    "required": ["candidates"]
+}
+
 str_model_call_a = llm.with_structured_output(call_a)
 str_model_call_b = llm.with_structured_output(call_b)
+str_model_call_c = llm.with_structured_output(call_c)
 
 prompt1 = PromptTemplate(
     template="""Analyze the following user query -> {query},
@@ -85,6 +119,18 @@ prompt2 = PromptTemplate(
     input_variables=['category', 'budget', 'usecase']
 )
 
+prompt3 = PromptTemplate(
+    template="""You are given raw web search results for a product search, and the required specs.
+    Required non-negotiable specs: {required_specs}
+    Raw search results: {raw_results} 
+    Task:
+    1. Identify distinct, specific products mentioned (ignore results that are generic articles, listing pages with no single identifiable product, or reviews with no product data).
+    2. For each distinct product, extract whatever specs are actually visible in the result.
+    3. Mark specs_complete as true only if every required non-negotiable spec is confirmed for that product; otherwise false.
+    4. Do not invent or assume specs that are not present in the text.""",
+    input_variables=['required_specs', 'raw_results']
+)
+
 call_a_chain = prompt1 | str_model_call_a
 
 branch_chain = RunnableBranch(
@@ -97,9 +143,9 @@ branch_chain = RunnableBranch(
 final_chain = call_a_chain | branch_chain
 
 # Case 1: everything present
-# result1 = final_chain.invoke(
-#     {"query": "I want to buy a laptop for Machine Learning work, budget around 80000 INR"})
-# print(result1)
+result1 = final_chain.invoke(
+    {"query": "I want to buy a laptop for Machine Learning work, budget around 80000 INR"})
+print(result1)
 
 # # Case 2: use case present, budget missing
 # result2 = final_chain.invoke(
