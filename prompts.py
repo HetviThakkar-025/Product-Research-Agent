@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableParallel, RunnableBranch, RunnableLambda
+from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 # Call A (status/question), Call E (price/availability)
@@ -11,6 +12,8 @@ llm_medium = ChatGroq(model="openai/gpt-oss-120b",
                       max_tokens=1200)
 # Call C (up to 4 full candidates)
 llm_large = ChatGroq(model="openai/gpt-oss-120b", max_tokens=2000)
+
+parser = StrOutputParser()
 
 call_a = {
     "title": "Call-A",
@@ -137,11 +140,33 @@ call_e = {
     "required": ["price", "availability"]
 }
 
+call_f = {
+    "title": "Fit-Evaluation",
+    "type": "object",
+    "properties": {
+        "fit_score": {
+            "type": "integer",
+            "description": "Score from 1-10 rating how well this product's known specs match the required non-negotiable and negotiable specs. 10 = perfectly matches or exceeds all non-negotiable specs. Lower scores reflect missing or inferior specs."
+        },
+        "reasoning": {
+            "type": "string",
+            "description": "Brief explanation of the score - which specs matched well, which fell short or are unconfirmed, and how negotiable specs factored in."
+        },
+        "missing_or_weak_specs": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of specific non-negotiable specs that are missing entirely, or present but do not meet the requirement (e.g. 'CPU: found AMD Ryzen 5 7520U, weaker than required Ryzen 5 5600H')."
+        }
+    },
+    "required": ["fit_score", "reasoning", "missing_or_weak_specs"]
+}
+
 str_model_call_a = llm_small.with_structured_output(call_a)
 str_model_call_b = llm_medium.with_structured_output(call_b)
 str_model_call_c = llm_large.with_structured_output(call_c)
 str_model_call_d = llm_medium.with_structured_output(call_d)
 str_model_call_e = llm_small.with_structured_output(call_e)
+str_model_call_f = llm_medium.with_structured_output(call_f)
 
 prompt1 = PromptTemplate(
     template="""Analyze the following user query -> {query},
@@ -152,12 +177,16 @@ prompt1 = PromptTemplate(
 )
 
 prompt2 = PromptTemplate(
-    template="""Extract technical specs/requirements for the product -> {category}, user's budget is -> {budget} and usecase is -> {usecase} \n 
-    After extracting specs, categorise specs into negotiable and non-negotiable specs, 
-    non-negotiable specs based on specs which are highly important and can't be neglected for given usecase, and 
-    negotiable based on specs that are less important, which can be ignored if there budget constraints
-    Respond only by populating the required schema fields. Do not write a conversational reply, markdown table, or explanation text,
-    output must go through the structured tool call only. You must respond only via the structured tool call, never as freeform conversational text.""",
+    template="""Extract technical specs/requirements for the product -> {category}, user's budget is -> {budget} and usecase is -> {usecase}
+
+After extracting specs, categorise specs into negotiable and non-negotiable specs,
+non-negotiable specs based on specs which are highly important and can't be neglected for given usecase, and
+negotiable based on specs that are less important, which can be ignored if there are budget constraints.
+
+IMPORTANT budget-realism constraint: if a budget is provided (not null), every non-negotiable spec you choose must be realistic and commonly available at that price point in the Indian market for this product category. Do not pick a spec tier that structurally forces the price far above the budget — for example, for a plain productivity/coding laptop with a budget under ₹60,000, do not require an H-series or HX-series processor (these are gaming/performance chips typically bundled with a dedicated GPU, pushing price well beyond that range) — prefer a U-series or equivalent power-efficient processor instead, since dedicated graphics are not needed for the stated usecase. Only require higher-tier, costlier specs as non-negotiable if the usecase genuinely cannot function without them (e.g. GPU is genuinely non-negotiable for gaming or ML, but not for general coding/productivity).
+
+Respond only by populating the required schema fields. Do not write a conversational reply, markdown table, or explanation text,
+output must go through the structured tool call only. You must respond only via the structured tool call, never as freeform conversational text.""",
     input_variables=['category', 'budget', 'usecase']
 )
 
@@ -211,6 +240,55 @@ Task:
     input_variables=['product_name', 'page_content']
 )
 
+prompt6 = PromptTemplate(
+    template="""Evaluate how well this product fits the buyer's requirements.
+
+Non-negotiable specs required: {non_negotiable_specs}
+Negotiable specs (nice-to-have): {negotiable_specs}
+Specs actually found for this product: {known_specs}
+
+Task:
+1. Compare each required non-negotiable spec against what was found. A spec only satisfies the requirement if it meets or exceeds what was asked - do not assume a similar-sounding spec is equivalent without judging it (e.g. AMD Ryzen 5 7520U is a weaker/newer-gen chip than Ryzen 5 5600H, not an automatic match).
+2. If a required spec is entirely missing from known_specs, treat it as unmet, not neutral.
+3. Give a fit_score from 1-10 based on how completely and well the non-negotiable specs are satisfied. Negotiable specs can add small bonus points but should not compensate for failing a non-negotiable spec.
+4. List every non-negotiable spec that is missing or falls short in missing_or_weak_specs, with a short reason for each.
+5. Respond only through the structured tool call, never as conversational text.""",
+    input_variables=['non_negotiable_specs', 'negotiable_specs', 'known_specs']
+)
+
+prompt7 = PromptTemplate(
+    template="""Generate a structured product recommendation report in Markdown, for a user shopping for a {category} in India.
+
+Use case: {usecase}
+Budget: {budget}
+Non-negotiable requirements: {non_negotiable_specs}
+Negotiable preferences: {negotiable_specs}
+
+Candidates found (already sorted, best fit first):
+{candidates}
+
+Is this a degraded result (fewer than 2 candidates fully met all requirements within budget)? {is_degraded}
+Realistic budget suggestion based on actual prices found (if degraded): {realistic_budget}
+
+Write the report with these sections, in Markdown:
+1. **Requirements Summary** - brief restatement of what was searched for.
+2. **Top Recommendations** - list each candidate with product name, price, fit score, and a one-line reason.
+3. **Comparison Table** - a Markdown table with columns: Product, Price, Fit Score, Key Specs, Within Budget.
+4. **Fit Analysis** - for each candidate, note missing or weak specs from the data given.
+5. **Final Recommendation** - pick the single best option and explain why, in plain language.
+6. If is_degraded is true: add a **Budget Gap** section - explain honestly that no candidate fully met all requirements within budget, state the gap using the realistic_budget figure, and suggest the user either raise their budget close to that figure or relax a specific non-negotiable spec.
+7. Highlight each product's source URL as a Markdown link.
+
+Only use the data provided above - do not invent specs, prices, or products not listed in the candidates
+
+If a spec is not present in known_specs for a candidate, you must state it is unknown/not listed — 
+never suggest, estimate, or imply what the value probably is, even based on the brand or product line's typical specs""",
+    input_variables=['category', 'usecase', 'budget', 'non_negotiable_specs',
+                     'negotiable_specs', 'candidates', 'is_degraded', 'realistic_budget']
+)
+
+report_chain = prompt7 | llm_medium | parser
+
 call_a_chain = prompt1 | str_model_call_a
 
 branch_chain = RunnableBranch(
@@ -224,7 +302,7 @@ final_chain = call_a_chain | branch_chain
 
 # Case 1: everything present
 # result1 = final_chain.invoke(
-#     {"query": "I want to buy a laptop for Machine Learning work, budget around 80000 INR"})
+#     {"query": "I want to buy a laptop for coding, budget around 50000 INR"})
 # print(result1)
 
 # # Case 2: use case present, budget missing

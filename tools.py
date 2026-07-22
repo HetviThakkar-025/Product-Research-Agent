@@ -8,7 +8,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
-llm = ChatGroq(model="openai/gpt-oss-120b")
+llm = ChatGroq(model="openai/gpt-oss-120b", max_tokens=600)
 parser = StrOutputParser()
 
 RETAIL_DOMAINS = ["flipkart.com", "amazon.in", "croma.com",
@@ -42,9 +42,17 @@ def invoke_with_retry(chain, inputs, max_retries=3):
     raise Exception("Max retries exceeded for rate/size limit")
 
 
-def build_query(call_b_result):
+def build_query(call_b_result, include_negotiable=True):
     category = call_b_result["category"]
-    specs = call_b_result["non_negotiable_specs"]
+    # copy, don't mutate original
+    specs = dict(call_b_result["non_negotiable_specs"])
+
+    if include_negotiable and call_b_result.get("negotiable_specs"):
+        # only add a couple, so negotiable specs nudge the search without dominating it
+        negotiable_items = list(call_b_result["negotiable_specs"].items())[:2]
+        for key, value in negotiable_items:
+            specs[key] = value
+
     chain = prompt1 | llm | parser
     result = invoke_with_retry(chain, {"specs": specs})
     restriction = 'India price INR only, Indian markets only'
@@ -55,9 +63,8 @@ def build_query(call_b_result):
 
 
 def is_product_page_url(url):
-    """Distinguish a specific product page from a search/listing page."""
-    listing_patterns = ['/s?', '/s/', 'search',
-                        '/l/']
+    listing_patterns = ['/s?', '/s/', 'search', '/l/',
+                        '/b', '/b/', '/c/', 'clp', 'collection']
     product_patterns = ['/dp/', '/p/itm', '/product/']
 
     url_lower = url.lower()
@@ -84,17 +91,22 @@ def filter_by_domain(results, allowed_domains):
     return verified_results
 
 
-def trim_results(results, max_content_length=300):
+def trim_results(results, max_content_length=200):
     trimmed = []
     for r in results['results']:
         clean_url = r['url'].split('?')[0]
-        content = r.get('title', '') and r.get('content', '')
         trimmed.append({
             'url': clean_url,
             'title': r.get('title', ''),
             'content': (r.get('content') or '')[:max_content_length]
         })
     return {'results': trimmed}
+
+
+def cap_results(results, max_for_llm=5):
+    sorted_results = sorted(
+        results['results'], key=lambda r: r.get('score', 0), reverse=True)
+    return {'results': sorted_results[:max_for_llm]}
 
 
 def extract_price_snippets(raw_content, window=80, max_snippets=5):
@@ -173,11 +185,29 @@ def extract_price(source_url):
 
 def search_price_fallback(product_name, source_url):
     """Fallback: narrow search restricted to the same domain as source_url."""
-    domain = source_url.split(
-        '/')[2].replace('www.', '')
+    domain = source_url.split('/')[2].replace('www.', '')
     fallback_tool = TavilySearch(max_results=2, include_domains=[domain])
     query = f"{product_name} price"
-    return fallback_tool.invoke({"query": query})
+    raw = fallback_tool.invoke({"query": query})
+
+    combined_content = " ".join(r.get('content', '')
+                                for r in raw.get('results', []))
+    return extract_price_snippets(combined_content)
+
+
+def select_report_candidates(all_candidates, top_n=3):
+    def sort_key(c):
+        # within_budget True sorts first (False=0 lower priority than True=1... need True first)
+        budget_priority = 1 if c.get('within_budget') is True else 0
+        return (budget_priority, c.get('fit_score', 0))
+
+    sorted_candidates = sorted(all_candidates, key=sort_key, reverse=True)
+    return sorted_candidates[:top_n]
+
+
+def suggest_realistic_budget(candidates):
+    prices = [c['price'] for c in candidates if c.get('price') is not None]
+    return min(prices) if prices else None
 
 
 search_tool = TavilySearch(max_results=4, include_domains=RETAIL_DOMAINS)
