@@ -89,12 +89,12 @@ call_c = {  # Step 3: candidate extraction
                         "type": "string",
                         "description": "URL where this product was found"
                     },
-                    "specs_complete": {
+                    "specs_found": {  # renamed from specs_complete
                         "type": "boolean",
-                        "description": "True only if all non-negotiable specs from requirements are confirmed for this product"
-                    }
+                        "description": "True only if a value exists for every required non-negotiable spec key for this product; does NOT mean the values meet the requirement, only that data was found."
+                    },
                 },
-                "required": ["product_name", "known_specs", "specs_complete"]
+                "required": ["product_name", "known_specs", "specs_found"]
             }
         }
     },
@@ -114,10 +114,28 @@ call_d = {
     "required": ["new_specs"]
 }
 
+call_e = {
+    "title": "Price-Extraction",
+    "type": "object",
+    "properties": {
+        "price": {
+            "type": ["integer", "null"],
+            "description": "Price in INR only. Null if no INR price found in the text."
+        },
+        "availability": {
+            "type": "string",
+            "enum": ["in_stock", "out_of_stock", "unknown"],
+            "description": "Stock status as stated in the text. Use 'unknown' if not mentioned."
+        }
+    },
+    "required": ["price", "availability"]
+}
+
 str_model_call_a = llm.with_structured_output(call_a)
 str_model_call_b = llm.with_structured_output(call_b)
 str_model_call_c = llm.with_structured_output(call_c)
 str_model_call_d = llm.with_structured_output(call_d)
+str_model_call_e = llm.with_structured_output(call_e)
 
 prompt1 = PromptTemplate(
     template="""Analyze the following user query -> {query},
@@ -144,7 +162,7 @@ prompt3 = PromptTemplate(
     Task:
     1. Identify distinct, specific products mentioned (ignore results that are generic articles, discussion forums, Q&A sites, listing pages with no single identifiable product, or reviews with no product data).
     2. For each distinct product, extract whatever specs are actually visible in the result.
-    3. Mark specs_complete as true only if every required non-negotiable spec is confirmed for that product; otherwise false.
+    3. Mark specs_found as true only if a value is present for every required non-negotiable spec key for this product; this only means data was found, not that the values meet the requirement.
     4. Do not invent or assume specs that are not present in the text.
     5. Only extract products that are literally named in the provided raw_results text, and must not supplement with outside knowledge at all.
     6. Extract at most 4 candidates total. If more than 4 distinct products are found, choose the 4 whose visible specs most closely match the required non-negotiable specs.
@@ -168,6 +186,20 @@ prompt4 = PromptTemplate(
     4. Respond only through the structured tool call. Do not write conversational text.""",
     input_variables=['product_name', 'known_specs',
                      'required_specs', 'follow_up_text']
+)
+
+prompt5 = PromptTemplate(
+    template="""You are given raw page content for a specific product page.
+
+Product: {product_name}
+Page content: {page_content}
+
+Task:
+1. Extract the price in INR only. If the price shown is in a different currency, or no price is present, return null.
+2. Determine availability/stock status if mentioned; use "unknown" if not stated.
+3. Do not invent a price. Only extract what is literally present in the text.
+4. Respond only through the structured tool call, never as conversational text.""",
+    input_variables=['product_name', 'page_content']
 )
 
 call_a_chain = prompt1 | str_model_call_a

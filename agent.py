@@ -1,5 +1,5 @@
-from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d
-from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, filter_by_domain, trim_results, invoke_with_retry, RETAIL_DOMAINS
+from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e
+from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, filter_by_domain, trim_results, invoke_with_retry, extract_price, search_price_fallback, RETAIL_DOMAINS
 
 user_query = "I want to buy a laptop for gaming, budget around 80000 INR"
 
@@ -47,9 +47,9 @@ else:
     for candidate in candidates:
         print(f"--- {candidate['product_name']} ---")
         print("Before:", candidate['known_specs'],
-              "| complete:", candidate['specs_complete'])
+              "| complete:", candidate['specs_found'])
 
-        if not candidate["specs_complete"]:
+        if not candidate["specs_found"]:
             follow_up_results = get_official_specs(candidate["product_name"])
 
             call_d_chain = prompt4 | str_model_call_d
@@ -60,11 +60,40 @@ else:
                 'follow_up_text': follow_up_results
             })
 
-            candidate['known_specs'].update(newspecs['new_specs'])
-            candidate['specs_complete'] = all(
+            for key, value in newspecs['new_specs'].items():
+                if key not in candidate['known_specs']:
+                    candidate['known_specs'][key] = value
+
+            candidate['specs_found'] = all(
                 spec in candidate['known_specs'] for spec in call_b_output['non_negotiable_specs']
             )
 
         print("After: ", candidate['known_specs'],
-              "| complete:", candidate['specs_complete'])
+              "| complete:", candidate['specs_found'])
         print()
+
+print("=== STEP 5: Price checking ===")
+for candidate in candidates:
+    extract_result = extract_price(candidate['source_url'])
+    page_content = extract_result  # you'll need to check the actual shape this returns
+
+    call_e_chain = prompt5 | str_model_call_e
+    price_result = invoke_with_retry(call_e_chain, {
+        'product_name': candidate['product_name'],
+        'page_content': page_content
+    })
+
+    if price_result['price'] is None:
+        print(
+            f"No price found via extract for {candidate['product_name']}, trying fallback search...")
+        fallback_result = search_price_fallback(
+            candidate['product_name'], candidate['source_url'])
+        price_result = invoke_with_retry(call_e_chain, {
+            'product_name': candidate['product_name'],
+            'page_content': fallback_result
+        })
+
+    candidate['price'] = price_result['price']
+    candidate['availability'] = price_result['availability']
+    print(
+        f"{candidate['product_name']}: ₹{candidate['price']} ({candidate['availability']})")

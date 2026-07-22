@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 import time
 from groq import RateLimitError
-from langchain_tavily import TavilySearch
+from langchain_tavily import TavilySearch, TavilyExtract
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -96,6 +96,22 @@ def filter_hallucinated_candidates(candidates, raw_results):
                 f"Dropped hallucinated candidate: {candidate['product_name']} (fake source: {source})")
 
     return verified_candidates
+
+
+def extract_price(source_url):
+    """Try to get full page content from the candidate's own source URL."""
+    extract_tool = TavilyExtract(extract_depth="advanced")
+    result = extract_tool.invoke({"urls": [source_url]})
+    return result
+
+
+def search_price_fallback(product_name, source_url):
+    """Fallback: narrow search restricted to the same domain as source_url."""
+    domain = source_url.split(
+        '/')[2].replace('www.', '') 
+    fallback_tool = TavilySearch(max_results=2, include_domains=[domain])
+    query = f"{product_name} price"
+    return fallback_tool.invoke({"query": query})
 
 
 search_tool = TavilySearch(max_results=4, include_domains=RETAIL_DOMAINS)
