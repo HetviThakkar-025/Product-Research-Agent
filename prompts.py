@@ -4,7 +4,13 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableParallel, RunnableBranch, RunnableLambda
 
 load_dotenv()
-llm = ChatGroq(model="openai/gpt-oss-120b", max_tokens=4000)
+# Call A (status/question), Call E (price/availability)
+llm_small = ChatGroq(model="openai/gpt-oss-120b", max_tokens=500)
+# Call B, Call D
+llm_medium = ChatGroq(model="openai/gpt-oss-120b",
+                      max_tokens=1200)
+# Call C (up to 4 full candidates)
+llm_large = ChatGroq(model="openai/gpt-oss-120b", max_tokens=2000)
 
 call_a = {
     "title": "Call-A",
@@ -131,11 +137,11 @@ call_e = {
     "required": ["price", "availability"]
 }
 
-str_model_call_a = llm.with_structured_output(call_a)
-str_model_call_b = llm.with_structured_output(call_b)
-str_model_call_c = llm.with_structured_output(call_c)
-str_model_call_d = llm.with_structured_output(call_d)
-str_model_call_e = llm.with_structured_output(call_e)
+str_model_call_a = llm_small.with_structured_output(call_a)
+str_model_call_b = llm_medium.with_structured_output(call_b)
+str_model_call_c = llm_large.with_structured_output(call_c)
+str_model_call_d = llm_medium.with_structured_output(call_d)
+str_model_call_e = llm_small.with_structured_output(call_e)
 
 prompt1 = PromptTemplate(
     template="""Analyze the following user query -> {query},
@@ -189,16 +195,19 @@ prompt4 = PromptTemplate(
 )
 
 prompt5 = PromptTemplate(
-    template="""You are given raw page content for a specific product page.
+    template="""You are given short text snippets extracted from a specific product's page. Each snippet is centered around a ₹ price mention, but not every ₹ amount is the actual product price — some may be for accessories, insurance add-ons, EMI breakdowns, or the original crossed-out M.R.P.
 
 Product: {product_name}
-Page content: {page_content}
+Page content snippets: {page_content}
 
 Task:
-1. Extract the price in INR only. If the price shown is in a different currency, or no price is present, return null.
-2. Determine availability/stock status if mentioned; use "unknown" if not stated.
-3. Do not invent a price. Only extract what is literally present in the text.
-4. Respond only through the structured tool call, never as conversational text.""",
+1. Identify the CURRENT SELLING PRICE of the product itself — this is the actual price a buyer pays right now.
+2. Do NOT select: M.R.P./original/strikethrough prices (these are inflated reference prices, not the real price), EMI-per-month amounts, prices for accessories/insurance/add-on services, or prices for any other product mentioned in the text.
+3. If multiple snippets show the same selling price repeated, that repetition is a strong signal it IS the correct price — prefer prices that appear more than once over one-off amounts.
+4. Extract the price as a plain integer in INR only, with no currency symbol, commas, or decimals. If no clear current selling price can be identified, return null. Do not guess or average multiple different prices.
+5. Determine availability/stock status if mentioned (e.g. "in stock", "only X left", "out of stock", "currently unavailable"); use "unknown" if not stated anywhere in the snippets.
+6. Do not invent a price or availability status. Only extract what is literally present in the text.
+7. Respond only through the structured tool call, never as conversational text or explanation.""",
     input_variables=['product_name', 'page_content']
 )
 
