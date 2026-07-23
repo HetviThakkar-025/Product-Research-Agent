@@ -36,8 +36,8 @@ def invoke_with_retry(chain, inputs, max_retries=3):
             return chain.invoke(inputs)
         except (RateLimitError, APIStatusError) as e:
             wait_time = min(2 ** attempt, 10)
-            print(
-                f"Rate/size limit hit ({type(e).__name__}), waiting {wait_time}s before retry...")
+            print(f"Rate/size limit hit ({type(e).__name__}): {e}")
+            print(f"Waiting {wait_time}s before retry...")
             time.sleep(wait_time)
     raise Exception("Max retries exceeded for rate/size limit")
 
@@ -147,10 +147,13 @@ def filter_hallucinated_candidates(candidates, raw_results):
     for candidate in candidates:
         source = candidate.get('source_url', '')
 
+        if not source:
+            print(
+                f"Dropped candidate with missing source_url: {candidate.get('product_name')}")
+            continue
+
         is_real = any(
-            source in real_url or real_url in source
-            for real_url in real_urls
-        )
+            source in real_url or real_url in source for real_url in real_urls)
         if not is_real:
             print(
                 f"Dropped hallucinated candidate: {candidate['product_name']} (fake source: {source})")

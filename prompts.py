@@ -12,6 +12,8 @@ llm_medium = ChatGroq(model="openai/gpt-oss-120b",
                       max_tokens=1200)
 # Call C (up to 4 full candidates)
 llm_large = ChatGroq(model="openai/gpt-oss-120b", max_tokens=2000)
+# report
+llm_report = ChatGroq(model="openai/gpt-oss-120b", max_tokens=3000)
 
 parser = StrOutputParser()
 
@@ -103,7 +105,7 @@ call_c = {  # Step 3: candidate extraction
                         "description": "True only if a value exists for every required non-negotiable spec key for this product; does NOT mean the values meet the requirement, only that data was found."
                     },
                 },
-                "required": ["product_name", "known_specs", "specs_found"]
+                "required": ["product_name", "known_specs", "specs_found", "source_url"]
             }
         }
     },
@@ -235,7 +237,7 @@ Task:
 3. If multiple snippets show the same selling price repeated, that repetition is a strong signal it IS the correct price — prefer prices that appear more than once over one-off amounts.
 4. Extract the price as a plain integer in INR only, with no currency symbol, commas, or decimals. If no clear current selling price can be identified, return null. Do not guess or average multiple different prices.
 5. Determine availability/stock status if mentioned (e.g. "in stock", "only X left", "out of stock", "currently unavailable"); use "unknown" if not stated anywhere in the snippets.
-6. Do not invent a price or availability status. Only extract what is literally present in the text.
+6. Even if you cannot identify a clear price or availability status from the snippets, you MUST still respond through the structured tool call with price set to null and availability set to "unknown" — never leave the response empty or decline to call the tool. An uncertain answer via the tool call is always correct; no answer at all is not.
 7. Respond only through the structured tool call, never as conversational text or explanation.""",
     input_variables=['product_name', 'page_content']
 )
@@ -287,7 +289,7 @@ never suggest, estimate, or imply what the value probably is, even based on the 
                      'negotiable_specs', 'candidates', 'is_degraded', 'realistic_budget']
 )
 
-report_chain = prompt7 | llm_medium | parser
+report_chain = prompt7 | llm_report | parser
 
 call_a_chain = prompt1 | str_model_call_a
 
