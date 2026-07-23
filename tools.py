@@ -30,11 +30,24 @@ Output the result as a single space-separated line, not a list.""",
 )
 
 
+class DailyQuotaExceeded(Exception):
+    """Raised when Groq's daily token quota (TPD) is hit — retrying won't help until reset."""
+    pass
+
+
 def invoke_with_retry(chain, inputs, max_retries=3):
     for attempt in range(max_retries):
         try:
             return chain.invoke(inputs)
         except (RateLimitError, APIStatusError) as e:
+            error_text = str(e)
+            if "tokens per day" in error_text or "TPD" in error_text:
+                # daily quota exhausted — waiting seconds won't help, fail fast
+                print(f"Daily quota exceeded: {e}")
+                raise DailyQuotaExceeded(
+                    "Groq's daily free-tier token limit has been reached. Please try again after the daily reset."
+                ) from e
+
             wait_time = min(2 ** attempt, 10)
             print(f"Rate/size limit hit ({type(e).__name__}): {e}")
             print(f"Waiting {wait_time}s before retry...")

@@ -1,5 +1,5 @@
 from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, invoke_with_retry, extract_price, search_price_fallback, RETAIL_DOMAINS
+from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, invoke_with_retry, extract_price, search_price_fallback, RETAIL_DOMAINS, DailyQuotaExceeded
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -27,6 +27,7 @@ def run_pipeline(user_query, progress_callback=None):
     Runs the full agent pipeline for a single user query.
     progress_callback(str) is called with status updates, if provided — for Streamlit to show live progress.
     Returns a dict: {'status': 'clarify', 'question': str} or {'status': 'done', 'report': str, 'candidates': list}
+    Raises DailyQuotaExceeded if Groq's daily token limit is hit — callers should catch this specifically.
     """
     def log(msg):
         if progress_callback:
@@ -130,6 +131,8 @@ def run_pipeline(user_query, progress_callback=None):
                         'product_name': candidate['product_name'],
                         'page_content': fallback_result
                     })
+            except DailyQuotaExceeded:
+                raise
             except Exception as e:
                 price_result = {'price': None, 'availability': 'unknown'}
 
