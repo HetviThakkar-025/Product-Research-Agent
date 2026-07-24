@@ -28,7 +28,7 @@ call_a = {
         },
         "question": {
             "type": ["string", "null"],
-            "description": "User query about product"
+            "description": "A specific clarifying question to ask the user, addressing exactly what's missing (budget, usecase, or both). Do NOT repeat or echo the user's original query — generate a genuinely new question, e.g. 'What is your budget for this?' or 'What will you mainly use this for?'"
         },
         "usecase": {
             "type": ["string", "null"],
@@ -172,9 +172,15 @@ str_model_call_f = llm_medium.with_structured_output(call_f)
 
 prompt1 = PromptTemplate(
     template="""Analyze the following user query -> {query},
-    Do not respond to the user directly. Determine whether usecase and budget are both specified,
-    if not specified ask user to specify, "asking a question" means filling in the question field, 
-    not addressing the user directly.""",
+    Do not respond to the user directly. Determine whether usecase and budget are both specified.
+
+    A usecase can be a specific activity (e.g. coding, gaming, machine learning, photography) OR a general context (e.g. family use, compact/personal use, professional use, everyday household use). For product categories where a specific activity doesn't naturally apply (e.g. refrigerator, washing machine, furniture), a general statement of context counts as a valid usecase.
+
+    If the user explicitly declines to give a usecase, or says something like "no usecase", "general use", "just normal/everyday use", "any", or "don't know" — treat this as "general everyday use" and count usecase as SPECIFIED (status can be "clear" if budget is also present). Do not keep asking for a usecase once the user has indicated they don't have a specific one.
+
+    Only ask a clarifying question about usecase if the user has given NO indication either way (neither a specific activity, a general context, nor a decline).
+
+    If budget is genuinely missing, still ask for it — "asking a question" means filling in the question field, not addressing the user directly.""",
     input_variables=['query']
 )
 
@@ -204,7 +210,8 @@ prompt3 = PromptTemplate(
     5. Only extract products that are literally named in the provided raw_results text, and must not supplement with outside knowledge at all.
     6. Extract at most 4 candidates total. If more than 4 distinct products are found, choose the 4 whose visible specs most closely match the required non-negotiable specs.
     7. Ignore products that are clearly a different category than requested (e.g. a desktop PC when a laptop was requested), even if some specs overlap.
-    8. Do not include a candidate if you cannot extract at least 2 concrete specs for it from the text. A product name alone, with no specs, is not a valid candidate — skip it entirely rather than including it with an empty known_specs.""",
+    8. Do not include a candidate if you cannot extract at least 2 concrete specs for it from the text. A product name alone, with no specs, is not a valid candidate — skip it entirely rather than including it with an empty known_specs.
+    9. If none of the raw results contain a valid, identifiable product with enough specs, you MUST still respond through the structured tool call with candidates set to an empty list []. Never decline to call the tool or respond as plain conversational text — an empty candidates list is a completely valid and expected answer.""",
     input_variables=['required_specs', 'raw_results']
 )
 

@@ -206,5 +206,5 @@ def run_pipeline(user_query, progress_callback=None):
 if __name__ == "__main__":
     # keep manual testing possible: python agent.py
     result = run_pipeline(
-        "I want to buy a laptop for coding, budget around 50000 INR", progress_callback=print)
+        "I want to buy a referigerator, budget 60000, family use", progress_callback=print)
     print(result.get('report') or result.get('question'))
