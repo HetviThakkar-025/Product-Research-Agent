@@ -8,13 +8,50 @@ if "GROQ_API_KEY" in st.secrets:
 if "TAVILY_API_KEY" in st.secrets:
     os.environ["TAVILY_API_KEY"] = st.secrets["TAVILY_API_KEY"]
 
-st.set_page_config(page_title="Product Research Agent")
-st.title("Product Research Agent")
+st.set_page_config(page_title="Product Research Agent", layout="centered")
+
+# ---------- minimal styling: clean look + fixes tables getting clipped on mobile ----------
+st.markdown("""
+<style>
+    .block-container {
+        padding-top: 1.2rem;
+        padding-bottom: 2rem;
+        max-width: 760px;
+    }
+    /* markdown tables were getting cut off / not rendering fully on narrow screens —
+       force them to scroll horizontally instead of overflowing hidden */
+    .stMarkdown table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+        max-width: 100%;
+    }
+    .stMarkdown table td, .stMarkdown table th {
+        white-space: normal;
+        min-width: 100px;
+    }
+    div[data-testid="stChatMessage"] {
+        padding: 0.4rem 0;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
     st.session_state.context = ""
     st.session_state.awaiting_clarification = False
+
+# ---------- header row: title + reset button, no sidebar ----------
+header_col1, header_col2 = st.columns([4, 1])
+with header_col1:
+    st.title("Product Research Agent")
+with header_col2:
+    st.write("")  # small vertical spacer to align button with title
+    if st.button("New search", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.context = ""
+        st.session_state.awaiting_clarification = False
+        st.rerun()
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
@@ -48,6 +85,11 @@ if user_input:
                 st.session_state.awaiting_clarification = True
             else:
                 reply = result['report']
+                reply += (
+                    "\n\n---\n"
+                    "*This search is complete — I won't treat anything you type next as a follow-up. "
+                    "Just type a new request below, or hit **New search** above to start fresh.*"
+                )
                 st.session_state.awaiting_clarification = False
 
         except DailyQuotaExceeded:
@@ -60,13 +102,6 @@ if user_input:
             reply = "Sorry, something went wrong while researching this — please try again in a moment."
             st.session_state.awaiting_clarification = False
 
-        st.markdown(reply)
+        st.markdown(reply, unsafe_allow_html=True)
 
     st.session_state.messages.append({"role": "assistant", "content": reply})
-
-if st.session_state.messages:
-    if st.sidebar.button("New search"):
-        st.session_state.messages = []
-        st.session_state.context = ""
-        st.session_state.awaiting_clarification = False
-        st.rerun()
