@@ -3,10 +3,13 @@ import os
 from agent import run_pipeline
 from tools import DailyQuotaExceeded
 
-if "GROQ_API_KEY" in st.secrets:
-    os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
-if "TAVILY_API_KEY" in st.secrets:
-    os.environ["TAVILY_API_KEY"] = st.secrets["TAVILY_API_KEY"]
+try:
+    if "GROQ_API_KEY" in st.secrets:
+        os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
+    if "TAVILY_API_KEY" in st.secrets:
+        os.environ["TAVILY_API_KEY"] = st.secrets["TAVILY_API_KEY"]
+except FileNotFoundError:
+    pass
 
 st.set_page_config(page_title="Product Research Agent", layout="centered")
 
@@ -47,6 +50,7 @@ with header_col1:
     st.title("Product Research Agent")
 with header_col2:
     st.write("")  # small vertical spacer to align button with title
+    st.write("")
     if st.button("New search", use_container_width=True):
         st.session_state.messages = []
         st.session_state.context = ""
