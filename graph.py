@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, find_search_snippet, RETAIL_DOMAINS, DailyQuotaExceeded
+from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, find_search_snippet, normalize_product_url, model_numbers, RETAIL_DOMAINS, DailyQuotaExceeded
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -38,12 +38,26 @@ def is_qualified(candidate):
     )
 
 
+def duplicate_of(candidate, known):
+    """(existing candidate, reason) if candidate is the same product as one in known, else None."""
+    url_key = normalize_product_url(candidate['source_url'])
+    models = model_numbers(candidate['product_name'])
+    name = candidate['product_name'].lower()
+
+    for other in known:
+        if normalize_product_url(other['source_url']) == url_key:
+            return other, 'url'
+        if models & model_numbers(other['product_name']):
+            return other, 'model number'
+        if other['product_name'].lower() == name:
+            return other, 'name'
+    return None
+
+
 def dedupe_candidates(existing, new):
-    known_names = {c['product_name'].lower() for c in existing}
     for c in new:
-        if c['product_name'].lower() not in known_names:
+        if not duplicate_of(c, existing):
             existing.append(c)
-            known_names.add(c['product_name'].lower())
     return existing
 
 
@@ -99,8 +113,18 @@ def extract_candidates(state, config):
         "raw_results": result
     })
 
-    new_candidates = filter_hallucinated_candidates(
+    verified = filter_hallucinated_candidates(
         candidates_result["candidates"], result)
+
+    # dedupe before verify/price/score so a product already seen costs no further calls
+    new_candidates = []
+    for candidate in verified:
+        match = duplicate_of(candidate, state["all_candidates"] + new_candidates)
+        if match:
+            other, reason = match
+            print(f"Dropped duplicate candidate: {candidate['product_name']} (same {reason} as {other['product_name']})")
+            continue
+        new_candidates.append(candidate)
 
     for candidate in new_candidates:
         candidate['search_snippet'] = find_search_snippet(

@@ -152,6 +152,40 @@ def is_product_page_url(url):
     return True
 
 
+def normalize_product_url(url):
+    """Key for "same product page": Amazon ASIN, Flipkart itm id (drops /hi/, slug and query), else host + path without query."""
+    url = url.split('?')[0].split('#')[0].lower().rstrip('/')
+
+    asin = re.search(r'amazon\.in/(?:.*/)?(?:dp|gp/product)/([a-z0-9]{10})', url)
+    if asin:
+        return f"amazon.in/dp/{asin.group(1)}"
+
+    itm = re.search(r'flipkart\.com/.*/p/(itm[a-z0-9]+)', url)
+    if itm:
+        return f"flipkart.com/p/{itm.group(1)}"
+
+    return re.sub(r'^https?://(www\.)?', '', url)
+
+
+# chip families look like model numbers (dimensity9200, snapdragon8gen3...) but are shared across many products
+NON_MODEL_PREFIXES = ('dimensity', 'snapdragon', 'helio', 'exynos', 'tensor', 'bionic',
+                      'ryzen', 'core', 'ultra', 'rtx', 'gtx', 'radeon', 'windows')
+
+
+def model_numbers(product_name):
+    """
+    Model-number-like tokens in a product name, e.g. RT38HG5A42S8HL, 82RK0085IN, fq5112tu.
+    Requires 8+ chars with 2+ letters and 3+ digits, so CPU/GPU/RAM tokens (i5-1235U, RTX4050, 16GB) don't count.
+    """
+    models = set()
+    for token in re.findall(r'[a-z0-9]+', product_name.lower()):
+        letters = sum(ch.isalpha() for ch in token)
+        digits = sum(ch.isdigit() for ch in token)
+        if len(token) >= 8 and letters >= 2 and digits >= 3 and not token.startswith(NON_MODEL_PREFIXES):
+            models.add(token)
+    return models
+
+
 def filter_by_domain(results, allowed_domains):
     verified_results = []
     for r in results['results']:
