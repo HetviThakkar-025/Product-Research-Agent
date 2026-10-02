@@ -9,7 +9,7 @@ from langchain_core.output_parsers import StrOutputParser
 from prompts import MODEL, REASONING_EFFORT
 
 load_dotenv()
-llm = ChatGroq(model=MODEL, max_tokens=600, reasoning_effort=REASONING_EFFORT)
+llm = ChatGroq(model=MODEL, max_tokens=600, reasoning_effort=REASONING_EFFORT, max_retries=0)
 parser = StrOutputParser()
 
 RETAIL_DOMAINS = ["flipkart.com", "amazon.in", "croma.com",

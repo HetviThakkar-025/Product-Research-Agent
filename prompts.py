@@ -9,15 +9,16 @@ load_dotenv()
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 # low reasoning keeps hidden reasoning tokens from eating the max_tokens budget
 REASONING_EFFORT = "low"
+# max_retries=0 on every ChatGroq: invoke_with_retry owns all retries (SDK retries hid 429s from it)
 
 # Call A (status/question), Call E (price/availability)
-llm_small = ChatGroq(model=MODEL, max_tokens=500, reasoning_effort=REASONING_EFFORT)
+llm_small = ChatGroq(model=MODEL, max_tokens=500, reasoning_effort=REASONING_EFFORT, max_retries=0)
 # Call B, Call D
-llm_medium = ChatGroq(model=MODEL, max_tokens=1200, reasoning_effort=REASONING_EFFORT)
+llm_medium = ChatGroq(model=MODEL, max_tokens=1200, reasoning_effort=REASONING_EFFORT, max_retries=0)
 # Call C (up to 4 full candidates)
-llm_large = ChatGroq(model=MODEL, max_tokens=3000, reasoning_effort=REASONING_EFFORT)
+llm_large = ChatGroq(model=MODEL, max_tokens=3000, reasoning_effort=REASONING_EFFORT, max_retries=0)
 # report
-llm_report = ChatGroq(model=MODEL, max_tokens=3000, reasoning_effort=REASONING_EFFORT)
+llm_report = ChatGroq(model=MODEL, max_tokens=3000, reasoning_effort=REASONING_EFFORT, max_retries=0)
 
 parser = StrOutputParser()
 
