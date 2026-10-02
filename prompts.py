@@ -1,3 +1,4 @@
+import os
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
@@ -5,15 +6,16 @@ from langchain_core.runnables import RunnableParallel, RunnableBranch, RunnableL
 from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
+MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+
 # Call A (status/question), Call E (price/availability)
-llm_small = ChatGroq(model="openai/gpt-oss-120b", max_tokens=500)
+llm_small = ChatGroq(model=MODEL, max_tokens=500)
 # Call B, Call D
-llm_medium = ChatGroq(model="openai/gpt-oss-120b",
-                      max_tokens=1200)
+llm_medium = ChatGroq(model=MODEL, max_tokens=1200)
 # Call C (up to 4 full candidates)
-llm_large = ChatGroq(model="openai/gpt-oss-120b", max_tokens=2000)
+llm_large = ChatGroq(model=MODEL, max_tokens=2000)
 # report
-llm_report = ChatGroq(model="openai/gpt-oss-120b", max_tokens=3000)
+llm_report = ChatGroq(model=MODEL, max_tokens=3000)
 
 parser = StrOutputParser()
 
