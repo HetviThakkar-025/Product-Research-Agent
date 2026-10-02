@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import traceback
 from agent import run_pipeline
 from tools import DailyQuotaExceeded
 
@@ -102,6 +103,7 @@ if user_input:
             st.session_state.awaiting_clarification = False
 
         except Exception as e:
+            traceback.print_exc()
             status.empty()
             reply = "Sorry, something went wrong while researching this — please try again in a moment."
             st.session_state.awaiting_clarification = False

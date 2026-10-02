@@ -6,3 +6,4 @@ langchain-tavily
 groq
 streamlit
 python-dotenv
+langgraph

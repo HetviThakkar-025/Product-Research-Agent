@@ -6,9 +6,10 @@ from langchain_tavily import TavilySearch, TavilyExtract
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from prompts import MODEL, REASONING_EFFORT
 
 load_dotenv()
-llm = ChatGroq(model="openai/gpt-oss-120b", max_tokens=600)
+llm = ChatGroq(model=MODEL, max_tokens=600, reasoning_effort=REASONING_EFFORT)
 parser = StrOutputParser()
 
 RETAIL_DOMAINS = ["flipkart.com", "amazon.in", "croma.com",
@@ -35,12 +36,45 @@ class DailyQuotaExceeded(Exception):
     pass
 
 
+class LLMRetriesExhausted(Exception):
+    """Raised when an LLM call still fails after all retries — carries the last real error text."""
+    pass
+
+
+TOOL_USE_FAILED_RETRIES = 2
+RETRY_MARGIN_SECONDS = 1.0
+MAX_RETRY_WAIT_SECONDS = 65
+
+
+def parse_retry_after(error):
+    """Seconds Groq asks us to wait, from 'try again in 1m2.5s' / '14.6s' / '450ms', else the retry-after header."""
+    match = re.search(r'try again in ([\d.hms]+)', str(error))
+    if match:
+        units = {'h': 3600, 'm': 60, 's': 1, 'ms': 0.001}
+        parts = re.findall(r'([\d.]+)(ms|h|m|s)', match.group(1))
+        if parts:
+            return sum(float(value) * units[unit] for value, unit in parts)
+
+    response = getattr(error, 'response', None)
+    header = response.headers.get('retry-after') if response is not None else None
+    try:
+        return float(header) if header else None
+    except ValueError:
+        return None
+
+
 def invoke_with_retry(chain, inputs, max_retries=3):
-    for attempt in range(max_retries):
+    rate_limit_retries = 0
+    tool_use_retries = 0
+    other_retries = 0
+
+    while True:
         try:
             return chain.invoke(inputs)
         except (RateLimitError, APIStatusError) as e:
             error_text = str(e)
+            status_code = getattr(e, 'status_code', None)
+
             if "tokens per day" in error_text or "TPD" in error_text:
                 # daily quota exhausted — waiting seconds won't help, fail fast
                 print(f"Daily quota exceeded: {e}")
@@ -48,11 +82,37 @@ def invoke_with_retry(chain, inputs, max_retries=3):
                     "Groq's daily free-tier token limit has been reached. Please try again after the daily reset."
                 ) from e
 
-            wait_time = min(2 ** attempt, 10)
-            print(f"Rate/size limit hit ({type(e).__name__}): {e}")
-            print(f"Waiting {wait_time}s before retry...")
-            time.sleep(wait_time)
-    raise Exception("Max retries exceeded for rate/size limit")
+            if isinstance(e, RateLimitError) or status_code == 429:
+                rate_limit_retries += 1
+                print(f"Rate limit hit (429): {e}")
+                if rate_limit_retries > max_retries:
+                    raise LLMRetriesExhausted(
+                        f"Still rate limited after {max_retries} retries. Last error: {error_text}") from e
+                retry_after = parse_retry_after(e)
+                wait_time = min(retry_after + RETRY_MARGIN_SECONDS, MAX_RETRY_WAIT_SECONDS) \
+                    if retry_after is not None else min(2 ** rate_limit_retries, 10)
+                print(f"Waiting {wait_time:.1f}s before retry {rate_limit_retries}/{max_retries}...")
+                time.sleep(wait_time)
+
+            elif status_code == 400 and "tool_use_failed" in error_text:
+                # bad/truncated tool call from the model — waiting won't help, just regenerate
+                tool_use_retries += 1
+                print(f"Tool call failed (400 tool_use_failed): {e}")
+                if tool_use_retries > TOOL_USE_FAILED_RETRIES:
+                    raise LLMRetriesExhausted(
+                        f"Model kept failing the structured tool call after {TOOL_USE_FAILED_RETRIES} retries. Last error: {error_text}") from e
+                print(f"Retrying immediately ({tool_use_retries}/{TOOL_USE_FAILED_RETRIES})...")
+
+            else:
+                # e.g. 413 request too large, 5xx — keep the old short backoff
+                other_retries += 1
+                print(f"Groq API error ({type(e).__name__}, status {status_code}): {e}")
+                if other_retries > max_retries:
+                    raise LLMRetriesExhausted(
+                        f"Groq API error persisted after {max_retries} retries. Last error: {error_text}") from e
+                wait_time = min(2 ** (other_retries - 1), 10)
+                print(f"Waiting {wait_time}s before retry...")
+                time.sleep(wait_time)
 
 
 def build_query(call_b_result, include_negotiable=True):

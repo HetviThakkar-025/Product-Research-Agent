@@ -7,15 +7,17 @@ from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+# low reasoning keeps hidden reasoning tokens from eating the max_tokens budget
+REASONING_EFFORT = "low"
 
 # Call A (status/question), Call E (price/availability)
-llm_small = ChatGroq(model=MODEL, max_tokens=500)
+llm_small = ChatGroq(model=MODEL, max_tokens=500, reasoning_effort=REASONING_EFFORT)
 # Call B, Call D
-llm_medium = ChatGroq(model=MODEL, max_tokens=1200)
+llm_medium = ChatGroq(model=MODEL, max_tokens=1200, reasoning_effort=REASONING_EFFORT)
 # Call C (up to 4 full candidates)
-llm_large = ChatGroq(model=MODEL, max_tokens=2000)
+llm_large = ChatGroq(model=MODEL, max_tokens=3000, reasoning_effort=REASONING_EFFORT)
 # report
-llm_report = ChatGroq(model=MODEL, max_tokens=3000)
+llm_report = ChatGroq(model=MODEL, max_tokens=3000, reasoning_effort=REASONING_EFFORT)
 
 parser = StrOutputParser()
 
