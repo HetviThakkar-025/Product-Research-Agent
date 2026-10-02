@@ -10,19 +10,26 @@ from collections import Counter
 from langchain_core.callbacks import BaseCallbackHandler
 
 from graph import build_graph, make_config, is_qualified
+from tools import is_product_page_url
 
 SAMPLE_QUERY = "I want to buy a referigerator, budget 60000, family use"
 
 
 class LLMCallCounter(BaseCallbackHandler):
-    """Counts every chat-model request (including retries) and failures, per graph node."""
+    """Counts every chat-model request (including retries), failures and tokens, per graph node."""
 
     def __init__(self):
         self.calls = Counter()
         self.errors = Counter()
+        self.tokens = Counter()
 
     def on_chat_model_start(self, serialized, messages, *, metadata=None, **kwargs):
         self.calls[(metadata or {}).get("langgraph_node", "?")] += 1
+
+    def on_llm_end(self, response, **kwargs):
+        usage = (response.llm_output or {}).get("token_usage") or {}
+        self.tokens["prompt"] += usage.get("prompt_tokens", 0)
+        self.tokens["completion"] += usage.get("completion_tokens", 0)
 
     def on_llm_error(self, error, *, metadata=None, **kwargs):
         self.errors[f"{(metadata or {}).get('langgraph_node', '?')}: {type(error).__name__}"] += 1
@@ -37,7 +44,9 @@ def summarize(node, update):
     if node == "start_iteration":
         return f"iteration={update['iteration']}"
     if node == "search":
-        return f"attempt={update['search_attempt']} results={len(update['search_results']['results'])}"
+        urls = list(update.get("search_snippets", {}))
+        product_pages = sum(is_product_page_url(u) for u in urls)
+        return f"attempt={update['search_attempt']} results={len(urls)} product_pages={product_pages}/{len(urls)}"
     if node in ("extract_candidates", "verify_specs", "check_prices", "score_fit"):
         return ", ".join(
             f"{c['product_name']} (specs_found={c.get('specs_found')}, price={c.get('price')}, "
@@ -59,9 +68,17 @@ def main():
     config["callbacks"] = [counter]
 
     final_report = None
+    all_candidates = []
+    search_totals = Counter()
     for chunk in graph.stream({"user_query": query}, config=config, stream_mode="updates"):
         for node, update in chunk.items():
             print(f"==> {node}: {summarize(node, update or {})}")
+            if node == "search":
+                urls = list(update.get("search_snippets", {}))
+                search_totals["results"] += len(urls)
+                search_totals["product_pages"] += sum(is_product_page_url(u) for u in urls)
+            elif node == "merge":
+                all_candidates = update["all_candidates"]
             if node == "report":
                 final_report = update["report"]
             elif node == "intake" and "clarify_question" in update:
@@ -73,6 +90,14 @@ def main():
     print("\n" + "=" * 80)
     print(f"LLM requests: {sum(counter.calls.values())} {dict(counter.calls)}")
     print(f"LLM errors:   {sum(counter.errors.values())} {dict(counter.errors)}")
+    print(f"LLM tokens:   {counter.tokens['prompt'] + counter.tokens['completion']} "
+          f"(prompt {counter.tokens['prompt']}, completion {counter.tokens['completion']})")
+    print(f"Search product-page hit rate: {search_totals['product_pages']}/{search_totals['results']}")
+    priced = [c for c in all_candidates if c.get("price") is not None]
+    print(f"Candidates priced: {len(priced)}/{len(all_candidates)} "
+          f"{dict(Counter(c.get('price_source') for c in all_candidates))}")
+    for c in all_candidates:
+        print(f"  - {c['product_name'][:70]} | price={c.get('price')} via {c.get('price_source')} {c.get('price_source_url') or ''}")
 
 
 if __name__ == "__main__":
