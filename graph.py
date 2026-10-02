@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, invoke_with_retry, extract_price, search_price_fallback, RETAIL_DOMAINS, DailyQuotaExceeded
+from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, find_search_snippet, RETAIL_DOMAINS, DailyQuotaExceeded
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -22,6 +22,7 @@ class AgentState(TypedDict, total=False):
     iteration: int
     search_attempt: int            # 1..SEARCH_ATTEMPTS within the current iteration
     search_results: dict           # trimmed/capped results, fed to Call C and the hallucination check
+    search_snippets: dict          # clean url -> full (untrimmed) search content, the primary price source
     new_candidates: list
     all_candidates: list
     report: str
@@ -82,10 +83,12 @@ def search(state, config):
     search_tool.max_results = 4 + (attempt - 1) * 3
     result = search_tool.invoke({"query": query})
     result['results'] = filter_by_domain(result, RETAIL_DOMAINS)
+    search_snippets = {r['url'].split('?')[0]: r.get('content') or '' for r in result['results']}
     result = trim_results(result)
     result = cap_results(result, max_for_llm=5)
 
-    return {"search_attempt": attempt, "search_results": result, "new_candidates": []}
+    return {"search_attempt": attempt, "search_results": result,
+            "search_snippets": search_snippets, "new_candidates": []}
 
 
 def extract_candidates(state, config):
@@ -98,6 +101,11 @@ def extract_candidates(state, config):
 
     new_candidates = filter_hallucinated_candidates(
         candidates_result["candidates"], result)
+
+    for candidate in new_candidates:
+        candidate['search_snippet'] = find_search_snippet(
+            candidate['source_url'], state.get("search_snippets", {}))
+
     return {"new_candidates": new_candidates}
 
 
@@ -131,39 +139,72 @@ def verify_specs(state, config):
     return {"new_candidates": new_candidates}
 
 
+def _price_sources(candidate):
+    """(label, fetch) in priority order; fetch() returns [(url, ₹ snippets)] and only runs if earlier sources found no price."""
+    source_url = candidate['source_url']
+    return [
+        ('search_snippet', lambda: [(source_url, extract_price_snippets(candidate.get('search_snippet', '')))]),
+        ('page_extract', lambda: [(source_url, extract_price(source_url))]),
+        ('fallback_search', lambda: [(r['url'], extract_price_snippets(r['content']))
+                                     for r in search_price_fallback(candidate['product_name'])]),
+    ]
+
+
+def _price_from_snippets(product_name, sources):
+    """
+    Call E on the ₹ snippets from sources [(url, snippets)]. The price is accepted only if that exact
+    ₹ amount appears literally in one of the sources, so the LLM can never invent one.
+    Returns (E result with price possibly nulled, url the price came from).
+    """
+    call_e_chain = prompt5 | str_model_call_e
+    price_result = invoke_with_retry(call_e_chain, {
+        'product_name': product_name,
+        'page_content': "\n---\n".join(snippets for _, snippets in sources)
+    })
+
+    price = price_result.get('price')
+    if price is None:
+        return price_result, None
+
+    for url, snippets in sources:
+        if price in rupee_amounts(snippets):
+            return price_result, url
+
+    print(f"Rejected price {price} for {product_name}: no matching ₹ amount in the source text")
+    return {**price_result, 'price': None}, None
+
+
 def check_prices(state, config):
     requirements = state["requirements"]
     new_candidates = copy.deepcopy(state["new_candidates"])
 
     _log(config, f"Checking prices for {len(new_candidates)} candidate(s)...")
     for candidate in new_candidates:
-        try:
-            page_content = extract_price(candidate['source_url'])
+        price_result = {'price': None, 'availability': 'unknown'}
+        price_source, price_source_url = None, None
 
-            if page_content:
-                call_e_chain = prompt5 | str_model_call_e
-                price_result = invoke_with_retry(call_e_chain, {
-                    'product_name': candidate['product_name'],
-                    'page_content': page_content
-                })
-            else:
-                price_result = {'price': None, 'availability': 'unknown'}
+        # each source is tried on its own, so a failing extract no longer skips the fallback
+        for label, fetch in _price_sources(candidate):
+            try:
+                sources = [(url, snippets) for url, snippets in fetch() if snippets]
+                if not sources:
+                    continue
+                result, url = _price_from_snippets(candidate['product_name'], sources)
+            except DailyQuotaExceeded:
+                raise
+            except Exception as e:
+                print(f"Price source '{label}' failed for {candidate['product_name']}: {type(e).__name__}: {e}")
+                continue
 
-            if price_result['price'] is None:
-                fallback_result = search_price_fallback(
-                    candidate['product_name'], candidate['source_url'])
-                call_e_chain = prompt5 | str_model_call_e
-                price_result = invoke_with_retry(call_e_chain, {
-                    'product_name': candidate['product_name'],
-                    'page_content': fallback_result
-                })
-        except DailyQuotaExceeded:
-            raise
-        except Exception as e:
-            price_result = {'price': None, 'availability': 'unknown'}
+            price_result = result
+            if result['price'] is not None:
+                price_source, price_source_url = label, url
+                break
 
         candidate['price'] = price_result['price']
         candidate['availability'] = price_result['availability']
+        candidate['price_source'] = price_source
+        candidate['price_source_url'] = price_source_url
 
         # Python-side budget check
         if candidate['price'] is None:

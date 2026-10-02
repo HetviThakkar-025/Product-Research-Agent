@@ -182,6 +182,30 @@ def cap_results(results, max_for_llm=5):
     return {'results': sorted_results[:max_for_llm]}
 
 
+PRICE_RE = r'₹[\d,]+(?:\.\d+)?'
+
+
+def rupee_amounts(text):
+    """Every ₹ amount literally present in text, as integers (₹59,499.00 -> 59499)."""
+    amounts = set()
+    for match in re.findall(PRICE_RE, text or ''):
+        try:
+            amounts.add(int(float(match.lstrip('₹').replace(',', ''))))
+        except ValueError:
+            pass
+    return amounts
+
+
+def find_search_snippet(source_url, snippets):
+    """Full retail-search content for a candidate's source_url (same loose match as the hallucination check)."""
+    if source_url in snippets:
+        return snippets[source_url]
+    for url, content in snippets.items():
+        if source_url in url or url in source_url:
+            return content
+    return ''
+
+
 def extract_price_snippets(raw_content, window=80, max_snippets=5):
     """
     Pull small text windows around every ₹ price mention,
@@ -190,7 +214,7 @@ def extract_price_snippets(raw_content, window=80, max_snippets=5):
     if not raw_content:
         return ""
 
-    matches = list(re.finditer(r'₹[\d,]+(?:\.\d+)?', raw_content))
+    matches = list(re.finditer(PRICE_RE, raw_content))
     if not matches:
         return ""
 
@@ -251,24 +275,36 @@ def extract_price(source_url):
     extract_tool = TavilyExtract(extract_depth="advanced")
     result = extract_tool.invoke({"urls": [source_url]})
 
+    # langchain_tavily returns {"error": e} instead of raising when the API call itself fails
+    if isinstance(result, dict) and 'error' in result:
+        error = result['error']
+        print(f"TavilyExtract error for {source_url}: {type(error).__name__}: {error}")
+        return ""
+
     if not isinstance(result, dict) or not result.get('results'):
-        print(f"Unexpected extract response shape for {source_url}")
+        print(f"Unexpected extract response shape for {source_url}: {str(result)[:300]}")
         return ""
 
     raw_content = result['results'][0].get('raw_content', '') or ''
     return extract_price_snippets(raw_content)
 
 
-def search_price_fallback(product_name, source_url):
-    """Fallback: narrow search restricted to the same domain as source_url."""
-    domain = source_url.split('/')[2].replace('www.', '')
-    fallback_tool = TavilySearch(max_results=2, include_domains=[domain])
+def search_price_fallback(product_name):
+    """
+    Fallback: price search across all retail domains (not just the candidate's own site).
+    Returns [{'url', 'content'}] for product pages only, so listing-page prices of other products can't leak in.
+    """
+    fallback_tool = TavilySearch(max_results=5, include_domains=RETAIL_DOMAINS)
     query = f"{product_name} price"
     raw = fallback_tool.invoke({"query": query})
 
-    combined_content = " ".join(r.get('content', '')
-                                for r in raw.get('results', []))
-    return extract_price_snippets(combined_content)
+    results = []
+    for r in raw.get('results', []):
+        url = r['url'].split('?')[0]
+        if not any(domain in url for domain in RETAIL_DOMAINS) or not is_product_page_url(url):
+            continue
+        results.append({'url': url, 'content': r.get('content') or ''})
+    return results
 
 
 def select_report_candidates(all_candidates, top_n=3):
