@@ -9,6 +9,7 @@ from tools import search_tool, get_official_specs, build_query, filter_hallucina
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
 SEARCH_ATTEMPTS = 2
+SEARCH_MAX_RESULTS = 7  # first attempt; each retry asks for 3 more
 
 # worst case is ~38 node runs: intake + report + 4 iterations x
 # (start_iteration + 2 x (search + extract_candidates) + verify/price/score/merge)
@@ -94,7 +95,7 @@ def search(state, config):
     query = build_query(call_b_result=state["requirements"],
                         include_negotiable=use_negotiable)
 
-    search_tool.max_results = 4 + (attempt - 1) * 3
+    search_tool.max_results = SEARCH_MAX_RESULTS + (attempt - 1) * 3
     result = search_tool.invoke({"query": query})
     result['results'] = filter_by_domain(result, RETAIL_DOMAINS)
     search_snippets = {r['url'].split('?')[0]: r.get('content') or '' for r in result['results']}

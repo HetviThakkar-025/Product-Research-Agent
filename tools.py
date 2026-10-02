@@ -26,6 +26,8 @@ Prioritize only the specs that meaningfully narrow a product search: CPU/process
 
 Skip specs that are minor or unusual for search purposes (e.g. keyboard type, port types, weight, battery life, build material) — even if they are technically required, they add noise to a search query rather than helping find matching products.
 
+Use at most 4 specs in total: keep only the 3-4 that narrow the search the most.
+
 Output the result as a single space-separated line, not a list.""",
     input_variables=['specs']
 )
@@ -128,9 +130,10 @@ def build_query(call_b_result, include_negotiable=True):
 
     chain = prompt1 | llm | parser
     result = invoke_with_retry(chain, {"specs": specs})
-    restriction = 'India price INR only, Indian markets only'
 
-    query = category + " " + result + " " + restriction
+    # no "India/INR only" phrase: include_domains already restricts to Indian retailers,
+    # and the extra words pulled results toward listing/search pages
+    query = category + " " + result.strip()
 
     return query
 
@@ -140,8 +143,15 @@ def is_product_page_url(url):
                         '/b', '/b/', '/c/', 'clp', 'collection']
     product_patterns = ['/dp/', '/p/itm', '/product/']
 
+    # search/collection pages and blogs that the generic patterns below miss
+    non_product_patterns = ['flipkart.com/q/', 'croma.com/unboxed/']
+
     url_lower = url.lower()
 
+    if any(pattern in url_lower for pattern in non_product_patterns):
+        return False
+    if 'flipkart.com' in url_lower and url_lower.split('?')[0].rstrip('/').endswith('/pr'):
+        return False
     if any(pattern in url_lower for pattern in product_patterns):
         return True
     if any(pattern in url_lower for pattern in listing_patterns):
@@ -356,4 +366,4 @@ def suggest_realistic_budget(candidates):
     return min(prices) if prices else None
 
 
-search_tool = TavilySearch(max_results=4, include_domains=RETAIL_DOMAINS)
+search_tool = TavilySearch(max_results=7, include_domains=RETAIL_DOMAINS)
