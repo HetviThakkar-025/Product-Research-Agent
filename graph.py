@@ -207,9 +207,11 @@ def check_prices(state, config):
     for candidate in new_candidates:
         price_result = {'price': None, 'availability': 'unknown'}
         price_source, price_source_url = None, None
+        tried = []
 
         # each source is tried on its own, so a failing extract no longer skips the fallback
         for label, fetch in _price_sources(candidate):
+            tried.append(label)
             try:
                 sources = [(url, snippets) for url, snippets in fetch() if snippets]
                 if not sources:
@@ -225,6 +227,9 @@ def check_prices(state, config):
             if result['price'] is not None:
                 price_source, price_source_url = label, url
                 break
+
+        print(f"Price source for {candidate['product_name']}: {price_source or 'none'} "
+              f"(price={price_result['price']}, tried: {', '.join(tried)})")
 
         candidate['price'] = price_result['price']
         candidate['availability'] = price_result['availability']
@@ -293,7 +298,9 @@ def report(state, config):
             'known_specs': c.get('known_specs'),
             'missing_or_weak_specs': c.get('missing_or_weak_specs'),
             'reasoning': c.get('reasoning'),
-            'source_url': c.get('source_url')
+            'source_url': c.get('source_url'),
+            'price_source': c.get('price_source'),
+            'price_source_url': c.get('price_source_url')
         })
 
     report_text = invoke_with_retry(report_chain, {

@@ -291,7 +291,7 @@ Write the report with these sections, in Markdown:
 4. **Fit Analysis** - for each candidate, note missing or weak specs from the data given.
 5. **Final Recommendation** - pick the single best option and explain why, in plain language.
 6. If is_degraded is true: add a **Budget Gap** section - explain honestly that no candidate fully met all requirements within budget, state the gap using the realistic_budget figure, and suggest the user either raise their budget close to that figure or relax a specific non-negotiable spec.
-7. Highlight each product's source URL as a Markdown link.
+7. Highlight each product's source URL as a Markdown link. If a candidate has a price_source_url, also link it next to that candidate's price as where the price was found.
 
 Only use the data provided above - do not invent specs, prices, or products not listed in the candidates
 
