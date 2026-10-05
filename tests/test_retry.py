@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 
 import httpx
-from groq import RateLimitError
+from groq import APIConnectionError, APIError, APIStatusError, RateLimitError
 
 import support  # noqa: F401  (network guard)
 
@@ -88,6 +88,48 @@ class RateLimitWaitTest(unittest.TestCase):
         _, second_call, _ = run([rate_limit(2)])
         self.assertEqual(first_call, [3.0])
         self.assertEqual(second_call, [3.0])
+
+
+TOOL_VALIDATION = ("Tool call validation failed: parameters for tool Call-B did not match schema: errors: "
+                   "[`/negotiable_specs/brand`: expected string, but got null, `/negotiable_specs/color`: expected "
+                   "string, but got null]")
+
+
+def streamed_tool_error():
+    # the shape of the live error: a plain groq.APIError raised while reading the stream (no status code)
+    return APIError(TOOL_VALIDATION, httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions"), body=None)
+
+
+class ToolCallErrorTest(unittest.TestCase):
+    def test_streamed_validation_error_retried_immediately(self):
+        result, sleeps, progress = run([streamed_tool_error()])
+        self.assertEqual(result, "ok")
+        self.assertEqual((sleeps, progress), ([], []))
+
+    def test_gives_up_after_two_retries_with_the_real_error_text(self):
+        clock = FakeClock()
+        chain = Chain(clock, [streamed_tool_error()] * 3)
+        with mock.patch.object(tools, "time", clock), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(tools.LLMRetriesExhausted) as raised:
+                tools.invoke_with_retry(chain, {})
+        self.assertIn("after 2 retries", str(raised.exception))
+        self.assertIn("/negotiable_specs/brand`: expected string, but got null", str(raised.exception))
+        self.assertEqual(chain.errors, [])  # 1 call + 2 retries
+
+    def test_400_tool_use_failed_still_retried(self):
+        response = httpx.Response(400, request=httpx.Request("POST", "https://api.groq.com"))
+        error = APIStatusError("Error code: 400 - {'error': {'code': 'tool_use_failed'}}", response=response, body=None)
+        result, sleeps, _ = run([error, error])
+        self.assertEqual((result, sleeps), ("ok", []))
+
+    def test_other_errors_without_status_are_not_retried(self):
+        request = httpx.Request("POST", "https://api.groq.com")
+        for error in (APIConnectionError(request=request), APIError("stream ended unexpectedly", request, body=None)):
+            clock = FakeClock()
+            chain = Chain(clock, [error])
+            with mock.patch.object(tools, "time", clock), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(type(error)):
+                    tools.invoke_with_retry(chain, {})
 
 
 if __name__ == "__main__":

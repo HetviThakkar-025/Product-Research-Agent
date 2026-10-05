@@ -2,7 +2,7 @@ import re
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 import time
-from groq import RateLimitError, APIStatusError
+from groq import APIError, RateLimitError, APIStatusError
 from langchain_tavily import TavilySearch, TavilyExtract
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
@@ -59,6 +59,8 @@ class LLMRetriesExhausted(Exception):
 
 
 TOOL_USE_FAILED_RETRIES = 2
+# a malformed structured-output tool call: Groq's 400 tool_use_failed, or the validation error a streamed call raises
+TOOL_CALL_ERROR_MARKERS = ("tool_use_failed", "tool call validation failed", "did not match schema")
 RETRY_MARGIN_SECONDS = 1.0
 MAX_RETRY_WAIT_SECONDS = 65
 # Groq's per-minute token window: Groq's own "try again in Xs" hint is often too short when the minute's budget is
@@ -92,9 +94,12 @@ def invoke_with_retry(chain, inputs, max_retries=3):
     while True:
         try:
             return chain.invoke(inputs)
-        except (RateLimitError, APIStatusError) as e:
+        except APIError as e:  # RateLimitError/APIStatusError, and plain APIError raised from a streamed response
             error_text = str(e)
             status_code = getattr(e, 'status_code', None)
+            is_tool_call_error = any(marker in error_text.lower() for marker in TOOL_CALL_ERROR_MARKERS)
+            if not isinstance(e, APIStatusError) and not is_tool_call_error:
+                raise  # e.g. a connection error: not handled here, as before
 
             if "tokens per day" in error_text or "TPD" in error_text:
                 # daily quota exhausted — waiting seconds won't help, fail fast
@@ -122,10 +127,10 @@ def invoke_with_retry(chain, inputs, max_retries=3):
                 emit_progress(f"Waiting {wait_time:.0f}s for Groq rate limit, retry {rate_limit_retries}/{max_retries}")
                 time.sleep(wait_time)
 
-            elif status_code == 400 and "tool_use_failed" in error_text:
-                # bad/truncated tool call from the model — waiting won't help, just regenerate
+            elif is_tool_call_error and status_code in (400, None):
+                # bad/truncated/invalid tool call from the model — waiting won't help, just regenerate
                 tool_use_retries += 1
-                print(f"Tool call failed (400 tool_use_failed): {e}")
+                print(f"Tool call failed ({type(e).__name__}, status {status_code}): {e}")
                 if tool_use_retries > TOOL_USE_FAILED_RETRIES:
                     raise LLMRetriesExhausted(
                         f"Model kept failing the structured tool call after {TOOL_USE_FAILED_RETRIES} retries. Last error: {error_text}") from e
