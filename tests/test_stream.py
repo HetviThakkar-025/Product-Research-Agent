@@ -7,12 +7,15 @@ import io
 import unittest
 from unittest import mock
 
+import httpx
+from groq import RateLimitError
 from langchain_core.messages import AIMessageChunk
 
 from support import FakeGroq, FakeTavily
 
 import agent
 import test_token_load
+import tools
 from tools import DailyQuotaExceeded
 
 
@@ -139,6 +142,38 @@ class RealGraphStreamTest(unittest.TestCase):
     def test_clarify_path(self):
         events = run_real({"Call-A": lambda p: {"status": "unclear", "question": "What is your budget?"}})
         self.assertEqual(events, [{"type": "final", "status": "clarify", "question": "What is your budget?"}])
+
+    def test_rate_limit_wait_streamed_as_progress(self):
+        calls = []
+
+        def fit_with_one_429(prompt):
+            calls.append(prompt)
+            if len(calls) == 1:
+                response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions"))
+                raise RateLimitError("Rate limit reached ... Please try again in 6.105s.", response=response, body=None)
+            return {"fit_score": 8, "reasoning": "ok", "missing_or_weak_specs": []}
+
+        with mock.patch.object(tools.time, "sleep") as sleep:
+            events = run_real({"Fit-Evaluation": fit_with_one_429})
+        sleep.assert_called_once()
+        progress = [e["text"] for e in events if e["type"] == "progress"]
+        self.assertIn("Waiting 7s for Groq rate limit, retry 1/3", progress)
+        self.assertLess(progress.index("Scoring fit for 2 candidate(s)..."),
+                        progress.index("Waiting 7s for Groq rate limit, retry 1/3"))
+        self.assertEqual(events[-1]["type"], "final")
+
+    def test_rate_limit_wait_outside_a_graph_is_silent(self):
+        response = httpx.Response(429, request=httpx.Request("POST", "https://api.groq.com"))
+        attempts = []
+
+        class Chain:
+            def invoke(self, inputs):
+                attempts.append(inputs)
+                if len(attempts) == 1:
+                    raise RateLimitError("Please try again in 1s.", response=response, body=None)
+                return "ok"
+        with mock.patch.object(tools.time, "sleep"), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(tools.invoke_with_retry(Chain(), {}), "ok")
 
     def test_error_path(self):
         def quota(prompt):

@@ -109,6 +109,8 @@ def invoke_with_retry(chain, inputs, max_retries=3):
                 wait_time = min(retry_after + RETRY_MARGIN_SECONDS, MAX_RETRY_WAIT_SECONDS) \
                     if retry_after is not None else min(2 ** rate_limit_retries, 10)
                 print(f"Waiting {wait_time:.1f}s before retry {rate_limit_retries}/{max_retries}...")
+                # streamed to the UI, so a long rate-limit wait doesn't look frozen
+                emit_progress(f"Waiting {wait_time:.0f}s for Groq rate limit, retry {rate_limit_retries}/{max_retries}")
                 time.sleep(wait_time)
 
             elif status_code == 400 and "tool_use_failed" in error_text:
