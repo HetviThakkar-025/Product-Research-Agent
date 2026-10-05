@@ -290,7 +290,7 @@ Candidates found (already sorted, best fit first):
 
 Is this a degraded result (fewer than 2 candidates fully met all requirements within budget)? {is_degraded}
 Realistic budget suggestion based on actual prices found (if degraded): {realistic_budget}
-Gap advice, decided from the data (if degraded): {gap_advice}
+Budget gap facts (if degraded): {gap_advice}
 
 Write the report with these sections, in Markdown:
 1. **Requirements Summary** - brief restatement of what was searched for.
@@ -298,7 +298,7 @@ Write the report with these sections, in Markdown:
 3. **Comparison Table** - a Markdown table with columns: Product, Price, Fit Score, Key Specs, Required Specs, Within Budget. Fill Required Specs with each candidate's spec_status verbatim, so being within budget is never read as an endorsement.
 4. **Fit Analysis** - for each candidate, note missing or weak specs from the data given.
 5. **Final Recommendation** - pick the single best option and explain why, in plain language.
-6. If is_degraded is true: add a **Budget Gap** section - explain honestly that no candidate fully met all requirements within budget, then follow the gap advice above exactly and suggest nothing it does not.
+6. If is_degraded is true: add a **Budget Gap** section, written in your own words from the budget gap facts above - explain the shortfall and offer only the options those facts list. Never copy instruction text from this prompt into the report.
 7. Highlight each product's source URL as a Markdown link. If a candidate has a price_source_url, also link it next to that candidate's price as where the price was found.
 
 Only use the data provided above - do not invent specs, prices, or products not listed in the candidates

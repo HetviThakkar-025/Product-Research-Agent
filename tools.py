@@ -660,6 +660,10 @@ def report_issues(report_text, headline):
     elif report_text[:start].strip():
         issues.append(f"text before section 1 was dropped: {report_text[:start].strip()[:80]!r}")
 
+    leaked = [phrase for phrase in INSTRUCTION_LEAK_PHRASES if phrase in report_text.lower()]
+    if leaked:
+        issues.append(f"instruction text copied into the report: {leaked}")
+
     section_5 = SECTION_5_RE.search(report_text)
     if not section_5:
         issues.append("no section 5 (Final Recommendation) heading found")
@@ -725,25 +729,32 @@ MIN_CANDIDATES_FOR_BUDGET_ADVICE = 2
 
 def gap_advice(candidates, budget):
     """
-    What the report's Budget Gap section may suggest, decided from the data: (kind, advice). Raising the budget is
-    suggested only when verified prices exist and every one of them is over budget; with fewer than 2 candidates
-    found at all the gap is in the search, not the budget.
+    Facts for the report's Budget Gap section, decided from the data: (kind, facts). The facts state the cause and
+    the only options worth offering - never instructions, so nothing copied from them reads like a command. Raising
+    the budget is an option only when verified prices exist and every one of them is over budget; with no candidates
+    or a single one the shortfall is in the search, not the budget.
     """
     priced = [c for c in candidates if c.get('price') is not None]
+    if not candidates:
+        return "none", ("No matching product pages were found. Options: rewording the request, or trying another "
+                        "product category.")
     if len(candidates) < MIN_CANDIDATES_FOR_BUDGET_ADVICE:
-        found = "Only 1 matching product was found" if len(candidates) == 1 else "No matching products were found"
-        return "search", (f"{found}, so this is a search problem, not a budget problem. "
-                          "Suggest a more specific query (for example capacity, type or brand) or relaxing one "
-                          "non-negotiable spec. Do not suggest raising the budget.")
+        return "search", ("Only 1 matching product was found, so the shortfall is in the search, not the budget. "
+                          "Options: a more specific request (capacity, type or brand), or relaxing one "
+                          "non-negotiable spec.")
     if not priced:
-        return "unverified", ("No candidate's price could be verified, so the budget cannot be judged. Suggest checking "
-                              "the linked product pages for current prices or a more specific query. Do not suggest "
-                              "raising the budget.")
+        return "unverified", ("No candidate's price could be verified, so the budget cannot be judged. Options: checking "
+                              "the linked product pages for current prices, or a more specific request.")
     if budget is not None and all(c.get('within_budget') is False for c in priced):
-        return "budget", ("Every candidate with a verified price is over the budget. Suggest raising the budget to the "
-                          "realistic budget suggestion (only if it is not \"none\") or relaxing one non-negotiable spec.")
-    return "specs", ("Some candidates have verified prices within the budget but do not meet every required spec. "
-                     "Suggest relaxing the spec they fail or a more specific query. Do not suggest raising the budget.")
+        return "budget", ("Every candidate with a verified price is over the budget. Options: raising the budget towards "
+                          "the realistic budget suggestion, or relaxing one non-negotiable spec.")
+    return "specs", ("Some candidates have verified prices within the budget but fail a required spec. Options: "
+                     "relaxing the spec they fail, or a more specific request.")
+
+
+# prompt wording that must never appear in a report (the model copying instructions instead of writing)
+INSTRUCTION_LEAK_PHRASES = ("do not suggest", "suggest nothing", "follow the gap advice", "copied verbatim",
+                            "never copy", "in your own words", "budget gap facts")
 
 
 def recommendation_headline(candidates, budget):

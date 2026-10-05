@@ -1,6 +1,7 @@
 """Report ranking, the Python-built Final Recommendation headline, and the report prompt's price instructions."""
 import contextlib
 import io
+import re
 import unittest
 
 from support import FakeGroq
@@ -234,7 +235,7 @@ class BudgetGapTest(unittest.TestCase):
 
     def test_report_prompt_gets_python_figures_verbatim(self):
         prompt = self.run_report([cand('spec-ok-over', 73990, False, 8), cand('cheap-fit-2', 41000, True, 2)])
-        self.assertIn("Gap advice, decided from the data (if degraded): Some candidates have verified prices within", prompt)
+        self.assertIn("Budget gap facts (if degraded): Some candidates have verified prices within", prompt)
         self.assertIn("Budget: ₹60,000", prompt)
         self.assertIn("(if degraded): ₹73,990 (₹13,990 above the ₹60,000 budget)", prompt)
         self.assertIn(BUDGET_INSTRUCTION, prompt)
@@ -249,60 +250,95 @@ class BudgetGapTest(unittest.TestCase):
 
 
 class GapAdviceTest(unittest.TestCase):
+    COMMAND_WORDS = ("do not", "don't", "suggest", "never", "must", "should", "follow")
+
     def kind(self, candidates, budget=60000):
         return tools.gap_advice(candidates, budget)
 
+    def test_zero_candidates_no_product_pages(self):
+        kind, facts = self.kind([])
+        self.assertEqual(kind, "none")
+        self.assertEqual(facts, "No matching product pages were found. Options: rewording the request, or trying "
+                                "another product category.")
+
     def test_one_candidate_is_a_search_problem(self):
         # live app check 1: a single fridge found; the report suggested raising the budget
-        kind, advice = self.kind([cand('LG 446 L 1 Star', 45990, True, 2)])
+        kind, facts = self.kind([cand('LG 446 L 1 Star', 45990, True, 2)])
         self.assertEqual(kind, "search")
-        self.assertTrue(advice.startswith("Only 1 matching product was found, so this is a search problem"))
-        self.assertIn("more specific query (for example capacity, type or brand)", advice)
-        self.assertIn("Do not suggest raising the budget.", advice)
-
-    def test_no_candidates_is_a_search_problem(self):
-        kind, advice = self.kind([])
-        self.assertEqual(kind, "search")
-        self.assertTrue(advice.startswith("No matching products were found, so this is a search problem"))
+        self.assertEqual(facts, "Only 1 matching product was found, so the shortfall is in the search, not the budget. "
+                                "Options: a more specific request (capacity, type or brand), or relaxing one "
+                                "non-negotiable spec.")
 
     def test_all_verified_prices_over_budget_is_a_budget_problem(self):
-        kind, advice = self.kind(LIVE_RUN_3)  # three verified prices, all over; three unpriced
+        kind, facts = self.kind(LIVE_RUN_3)  # three verified prices, all over; three unpriced
         self.assertEqual(kind, "budget")
-        self.assertIn("Suggest raising the budget to the realistic budget suggestion", advice)
+        self.assertIn("Options: raising the budget towards the realistic budget suggestion", facts)
 
     def test_no_verified_prices(self):
-        kind, advice = self.kind([cand('a', None, 'unknown', 9), cand('b', None, 'unknown', 7)])
+        kind, facts = self.kind([cand('a', None, 'unknown', 9), cand('b', None, 'unknown', 7)])
         self.assertEqual(kind, "unverified")
-        self.assertIn("Do not suggest raising the budget.", advice)
+        self.assertIn("the budget cannot be judged", facts)
 
     def test_in_budget_prices_that_fail_specs_is_a_spec_problem(self):
-        kind, advice = self.kind([cand('a', 45000, True, 3), cand('b', 70000, False, 9)])
+        kind, _ = self.kind([cand('a', 45000, True, 3), cand('b', 70000, False, 9)])
         self.assertEqual(kind, "specs")
-        self.assertIn("Do not suggest raising the budget.", advice)
 
-    def test_no_budget_never_suggests_raising_it(self):
+    def test_no_budget_never_offers_raising_it(self):
         self.assertEqual(self.kind([cand('a', 45000, True, 3), cand('b', 70000, True, 5)], budget=None)[0], "specs")
 
-    def test_only_budget_kind_mentions_raising_without_prohibition(self):
-        for candidates in ([cand('a', 1, True, 2)], [], [cand('a', None, 'unknown', 9)] * 2,
-                           [cand('a', 45000, True, 3), cand('b', 70000, False, 9)]):
-            self.assertIn("Do not suggest raising the budget.", self.kind(candidates)[1])
+    def every_kind(self):
+        return [self.kind(c) for c in ([], [cand('a', 1, True, 2)], [cand('a', None, 'unknown', 9)] * 2, LIVE_RUN_3,
+                                       [cand('a', 45000, True, 3), cand('b', 70000, False, 9)])]
 
-    def test_report_prompt_gets_search_advice_for_single_candidate(self):
-        fake = FakeGroq({"text": lambda p: "## 1. Requirements Summary\n## 5. Final Recommendation\nx"}).install()
+    def test_facts_are_not_commands(self):
+        for kind, facts in self.every_kind():
+            for word in self.COMMAND_WORDS:
+                self.assertIsNone(re.search(rf"\b{word}\b", facts.lower()), f"{kind}: {word!r} in {facts}")
+
+    def test_only_budget_kind_offers_raising_the_budget(self):
+        for kind, facts in self.every_kind():
+            self.assertEqual("raising the budget" in facts, kind == "budget", kind)
+
+    def run_report(self, candidates, report_for):
+        fake = FakeGroq({"text": report_for}).install()
         state = {"requirements": {'category': 'refrigerator', 'usecase': 'family', 'budget': 60000,
                                   'non_negotiable_specs': {'capacity': 'at least 250 L'}, 'negotiable_specs': None},
-                 "all_candidates": [cand('LG 446 L 1 Star', None, 'unknown', 2)]}
+                 "all_candidates": candidates}
         try:
             with contextlib.redirect_stdout(io.StringIO()) as out:
-                graph.report(state, {})
+                update = graph.report(state, {})
         finally:
             fake.uninstall()
-        prompt = fake.calls[0][1]
-        self.assertIn("Gap advice, decided from the data (if degraded): Only 1 matching product was found", prompt)
-        self.assertIn("then follow the gap advice above exactly and suggest nothing it does not.", prompt)
+        return update, fake.calls[0][1], out.getvalue()
+
+    def test_report_fixture_copying_the_facts_has_no_instruction_phrases(self):
+        # worst case: the model pastes the Python-supplied facts into section 6 word for word
+        def copying_model(prompt):
+            facts = prompt.split("Budget gap facts (if degraded): ", 1)[1].split("\n", 1)[0]
+            headline = prompt.split('copied verbatim: "', 1)[1].split('" Then', 1)[0]
+            return (f"## 1. Requirements Summary\nFridge.\n## 5. Final Recommendation\n{headline}\n"
+                    f"## 6. Budget Gap\n{facts}")
+        for candidates in ([], [cand('LG 446 L 1 Star', None, 'unknown', 2)], LIVE_RUN_3):
+            update, prompt, log = self.run_report(candidates, copying_model)
+            for phrase in ("Do not suggest", "do not suggest", "Suggest nothing", "follow the gap advice", "Never copy"):
+                self.assertNotIn(phrase, update["report"])
+            self.assertNotIn("Report check: instruction text copied", log)
+
+    def test_instruction_text_in_a_report_is_flagged(self):
+        report = ("## 1. Requirements Summary\nx\n## 5. Final Recommendation\nh\n## 6. Budget Gap\n"
+                  "Only 1 matching product was found. Do not suggest raising the budget.")
+        _, _, log = self.run_report([cand('LG', None, 'unknown', 2)], lambda p: report)
+        self.assertIn("Report check: instruction text copied into the report: ['do not suggest']", log)
+
+    def test_prompt_section_6_uses_facts_in_own_words(self):
+        _, prompt, log = self.run_report([cand('LG 446 L 1 Star', None, 'unknown', 2)],
+                                         lambda p: "## 1. Requirements Summary\n## 5. Final Recommendation\nx")
+        self.assertIn("Budget gap facts (if degraded): Only 1 matching product was found", prompt)
+        self.assertIn("6. If is_degraded is true: add a **Budget Gap** section, written in your own words from the budget "
+                      "gap facts above - explain the shortfall and offer only the options those facts list. Never copy "
+                      "instruction text from this prompt into the report.", prompt)
         self.assertIn(FACTS_INSTRUCTION, prompt)
-        self.assertIn("Budget gap: search", out.getvalue())
+        self.assertIn("Budget gap: search", log)
 
 
 class SpecStatusTest(unittest.TestCase):
