@@ -2,6 +2,21 @@ from graph import build_graph, make_config
 
 _graph = build_graph()
 
+# "custom" carries the progress/headline events that nodes send with get_stream_writer
+STREAM_MODES = ["updates", "messages", "custom"]
+
+
+def _result(final_state):
+    if "clarify_question" in final_state:
+        return {'status': 'clarify', 'question': final_state['clarify_question']}
+
+    return {
+        'status': 'done',
+        'report': final_state['report'],
+        'candidates': final_state['report_candidates'],
+        'is_degraded': final_state['is_degraded']
+    }
+
 
 def run_pipeline(user_query, progress_callback=None):
     """
@@ -12,16 +27,30 @@ def run_pipeline(user_query, progress_callback=None):
     """
     final_state = _graph.invoke({"user_query": user_query},
                                 config=make_config(progress_callback))
+    return _result(final_state)
 
-    if "clarify_question" in final_state:
-        return {'status': 'clarify', 'question': final_state['clarify_question']}
 
-    return {
-        'status': 'done',
-        'report': final_state['report'],
-        'candidates': final_state['report_candidates'],
-        'is_degraded': final_state['is_degraded']
-    }
+def run_pipeline_stream(user_query):
+    """
+    Same pipeline as run_pipeline, streamed. Yields, in order of arrival:
+      {"type": "progress", "text": str}  the progress wording nodes already use, plus Groq rate-limit waits
+      {"type": "headline", "text": str}  the Python-built Final Recommendation sentence, just before the report
+      {"type": "token", "text": str}     report text as it is generated (report node only, never reasoning)
+      {"type": "final", **result}        last; result is the dict run_pipeline returns
+    Exceptions (e.g. DailyQuotaExceeded) propagate to the caller.
+    """
+    state = {"user_query": user_query}
+    for mode, chunk in _graph.stream({"user_query": user_query}, config=make_config(), stream_mode=STREAM_MODES):
+        if mode == "custom":
+            yield chunk
+        elif mode == "messages":
+            message, metadata = chunk
+            if metadata.get("langgraph_node") == "report" and isinstance(message.content, str) and message.content:
+                yield {"type": "token", "text": message.content}
+        elif mode == "updates":
+            for update in chunk.values():
+                state.update(update or {})  # every state key uses the default overwrite reducer
+    yield {"type": "final", **_result(state)}
 
 
 if __name__ == "__main__":

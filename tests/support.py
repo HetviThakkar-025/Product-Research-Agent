@@ -14,8 +14,8 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("GROQ_API_KEY", "test-key")
 os.environ.setdefault("TAVILY_API_KEY", "test-key")
 
-from langchain_core.messages import AIMessage  # noqa: E402
-from langchain_core.outputs import ChatGeneration, ChatResult  # noqa: E402
+from langchain_core.messages import AIMessage, AIMessageChunk  # noqa: E402
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult  # noqa: E402
 from langchain_groq import ChatGroq  # noqa: E402
 from langchain_tavily import TavilyExtract, TavilySearch  # noqa: E402
 
@@ -29,6 +29,7 @@ def _blocked(*args, **kwargs):
 
 
 ChatGroq._generate = _blocked
+ChatGroq._stream = _blocked  # used instead of _generate when the graph streams messages
 TavilySearch._run = _blocked
 TavilyExtract._run = _blocked
 
@@ -39,9 +40,10 @@ def load_fixture(name):
 
 class FakeGroq:
     """
-    Stands in for ChatGroq._generate. Structured calls are answered by handlers[tool name]
+    Stands in for ChatGroq._generate and ChatGroq._stream. Structured calls are answered by handlers[tool name]
     (e.g. "Candidate-Extraction"), plain-text calls by handlers["text"]; a handler gets the
-    prompt text and returns the tool args (dict) or the text (str).
+    prompt text and returns the tool args (dict) or the text (str). Streamed text comes word by word,
+    preceded by a reasoning-only chunk, as gpt-oss does.
     """
 
     def __init__(self, handlers, prompt_tokens=100, completion_tokens=10):
@@ -53,12 +55,30 @@ class FakeGroq:
     def install(self):
         fake = self
 
-        def _generate(model, messages, stop=None, run_manager=None, **kwargs):
+        def _answer(messages, kwargs):
             prompt = "\n".join(str(m.content) for m in messages)
             tools = kwargs.get("tools") or []
             name = tools[0]["function"]["name"] if tools else "text"
             fake.calls.append((name, prompt))
-            answer = fake.handlers[name](prompt)
+            return name, fake.handlers[name](prompt)
+
+        def _stream(model, messages, stop=None, run_manager=None, **kwargs):
+            name, answer = _answer(messages, kwargs)
+            if name == "text":
+                chunks = [AIMessageChunk(content="", additional_kwargs={"reasoning_content": "thinking about it"})]
+                words = answer.split(" ")
+                chunks += [AIMessageChunk(content=w if i == len(words) - 1 else w + " ") for i, w in enumerate(words)]
+            else:
+                chunks = [AIMessageChunk(content="", tool_call_chunks=[
+                    {"name": name, "args": json.dumps(answer), "id": f"call_{len(fake.calls)}", "index": 0}])]
+            for message in chunks:
+                chunk = ChatGenerationChunk(message=message)
+                if run_manager:
+                    run_manager.on_llm_new_token(message.content, chunk=chunk)
+                yield chunk
+
+        def _generate(model, messages, stop=None, run_manager=None, **kwargs):
+            name, answer = _answer(messages, kwargs)
             if name == "text":
                 message = AIMessage(content=answer)
             else:
@@ -67,10 +87,12 @@ class FakeGroq:
             return ChatResult(generations=[ChatGeneration(message=message)], llm_output={"token_usage": usage})
 
         ChatGroq._generate = _generate
+        ChatGroq._stream = _stream
         return self
 
     def uninstall(self):
         ChatGroq._generate = _blocked
+        ChatGroq._stream = _blocked
 
     def names(self):
         return [name for name, _ in self.calls]

@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, budget_note, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded
+from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, budget_note, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded, emit_event, emit_progress
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -76,6 +76,7 @@ def _log(config, msg):
     callback = (config or {}).get("configurable", {}).get("progress_callback")
     if callback:
         callback(msg)
+    emit_progress(msg)  # progress event for run_pipeline_stream; no-op under invoke
 
 
 # ---------- nodes ----------
@@ -377,6 +378,7 @@ def report(state, config):
 
     # decided in Python from verified prices, so the model can't crown an unpriced candidate
     headline = recommendation_headline(all_candidates, requirements['budget'])
+    emit_event({"type": "headline", "text": headline})  # shown before the report text streams
 
     candidates_summary = []
     for c in report_candidates:

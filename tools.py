@@ -7,6 +7,7 @@ from langchain_tavily import TavilySearch, TavilyExtract
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langgraph.config import get_stream_writer
 from prompts import MODEL, REASONING_EFFORT
 
 load_dotenv()
@@ -32,6 +33,19 @@ Use at most 4 specs in total: keep only the 3-4 that narrow the search the most.
 Output the result as a single space-separated line, not a list.""",
     input_variables=['specs']
 )
+
+
+def emit_event(event):
+    """Sends an event dict to graph.stream(..., stream_mode="custom") consumers; a no-op under invoke or outside a graph run."""
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:  # not inside a graph run
+        return
+    writer(event)
+
+
+def emit_progress(text):
+    emit_event({"type": "progress", "text": text})
 
 
 class DailyQuotaExceeded(Exception):
