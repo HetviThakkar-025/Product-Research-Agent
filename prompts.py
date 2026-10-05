@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import RunnableParallel, RunnableBranch, RunnableLambda
+from langchain_core.runnables import RunnableParallel, RunnableBranch, RunnableLambda, RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
@@ -193,6 +193,7 @@ prompt1 = PromptTemplate(
 
 prompt2 = PromptTemplate(
     template="""Extract technical specs/requirements for the product -> {category}, user's budget is -> {budget} and usecase is -> {usecase}
+User's request, in their own words: {request}
 
 After extracting specs, categorise specs into negotiable and non-negotiable specs,
 non-negotiable specs based on specs which are highly important and can't be neglected for given usecase, and
@@ -200,12 +201,13 @@ negotiable based on specs that are less important, which can be ignored if there
 Only mark a spec non-negotiable if product listings state it as a concrete, checkable value (e.g. processor, RAM, storage, display size/resolution); put subjective or rarely listed qualities (keyboard feel, build quality, speakers) under negotiable specs, and keep non-negotiable specs to at most 4.
 State non-negotiable specs as minimum thresholds or classes (for example 'RAM at least 8 GB', 'Intel Core i5 or Ryzen 5 or better'), never as specific model numbers or the highest configuration.
 Do not make a spec non-negotiable unless the user's request states it or the use case clearly requires it; for a general request, use broad thresholds and put everything else under negotiable.
+Keep every value the user's request states exactly as given and make it non-negotiable (for example '250 litre' stays 'at least 250 L' and 'double door' stays type 'double door'; 'frost free' is a cooling feature, not a type); the threshold wording above applies only to specs the user did not state, and the budget is never a spec.
 
 IMPORTANT budget-realism constraint: if a budget is provided (not null), every non-negotiable spec you choose must be realistic and commonly available at that price point in the Indian market for this product category. Do not pick a spec tier that structurally forces the price far above the budget — for example, for a plain productivity/coding laptop with a budget under ₹60,000, do not require an H-series or HX-series processor (these are gaming/performance chips typically bundled with a dedicated GPU, pushing price well beyond that range) — prefer a U-series or equivalent power-efficient processor instead, since dedicated graphics are not needed for the stated usecase. Only require higher-tier, costlier specs as non-negotiable if the usecase genuinely cannot function without them (e.g. GPU is genuinely non-negotiable for gaming or ML, but not for general coding/productivity).
 
 Respond only by populating the required schema fields. Do not write a conversational reply, markdown table, or explanation text,
 output must go through the structured tool call only. You must respond only via the structured tool call, never as freeform conversational text.""",
-    input_variables=['category', 'budget', 'usecase']
+    input_variables=['category', 'budget', 'usecase', 'request']
 )
 
 prompt3 = PromptTemplate(
@@ -325,7 +327,10 @@ branch_chain = RunnableBranch(
     RunnableLambda(lambda x: {"error": "Could not determine status", "raw": x})
 )
 
-final_chain = call_a_chain | branch_chain
+# Call B also needs the user's own words, which Call A's output does not carry
+final_chain = (RunnablePassthrough.assign(call_a=call_a_chain)
+               | RunnableLambda(lambda x: {**x["call_a"], "request": x["query"]})
+               | branch_chain)
 
 # Case 1: everything present
 # result1 = final_chain.invoke(

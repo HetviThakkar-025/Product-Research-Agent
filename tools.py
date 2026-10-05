@@ -673,6 +673,19 @@ def report_issues(report_text, headline):
     return issues
 
 
+def drop_budget_specs(requirements):
+    """Call B output without any spec keyed like a budget or price (the budget is never a spec)."""
+    cleaned = dict(requirements)
+    for field in ('non_negotiable_specs', 'negotiable_specs'):
+        specs = requirements.get(field)
+        if specs:
+            kept = {k: v for k, v in specs.items() if not re.search(r'budget|price|cost', k, re.IGNORECASE)}
+            if len(kept) < len(specs):
+                print(f"Dropped budget-like spec(s) from {field}: {sorted(set(specs) - set(kept))}")
+            cleaned[field] = kept
+    return cleaned
+
+
 def format_inr(amount):
     """₹ with Indian digit grouping: 132489 -> ₹1,32,489."""
     digits = str(int(amount))
