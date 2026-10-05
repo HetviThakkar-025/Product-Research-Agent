@@ -22,6 +22,8 @@ You type something like _"I want a laptop for coding, budget around 50000 INR"_ 
 
 In the app you see each step's progress live while it works (including any wait for the AI service's rate limit), and the report streams in as it is written, after its one-line recommendation.
 
+**Tip:** specific requests work best — for example _"double door frost free refrigerator 250 litre 3 star under 50000"_ — because vague queries often return only category pages instead of individual products.
+
 ---
 
 ## Why this was harder than it sounds
@@ -105,3 +107,9 @@ tests/        # Mocked unit tests (no API calls)
 - Runs on free-tier API limits, so it may occasionally hit daily usage caps under heavy traffic — you'll see a clear message if that happens, not a crash.
 - Search quality varies by product category — tested most heavily on laptops, with good results on appliances too, but some categories may need a few tries to find good matches.
 - Not connected to live pricing APIs, so prices are as current as the last time Tavily indexed that page — always worth double-checking on the actual retailer site before buying.
+
+## Known issues
+
+- Specs you state are sometimes treated as preferences rather than requirements, so a product that misses one can still be listed.
+- Review pages can occasionally pass as product pages.
+- Price coverage depends on search snippets: when a retailer's snippet doesn't show the price, the product usually ends up "price unverified".
