@@ -167,8 +167,15 @@ class AttributePricesTest(unittest.TestCase):
         self.assertEqual(self.amounts("Thin & Light Business/15.6\" -53%₹47,880.00"),
                          ([], [(47880, 'product not named nearby')]))
 
-    def test_own_page_id_counts_as_own_model(self):
-        self.assertEqual(self.amounts("/dp/B0DCG26YC5 ₹52,990"), ([52990], []))
+    def test_own_flipkart_item_id_counts_as_own_model(self):
+        self.assertEqual(self.amounts("/p/itm7efcb2faf35a3 ₹52,990", url="https://www.flipkart.com/hp-15/p/itm7efcb2faf35a3"),
+                         ([52990], []))
+
+    def test_asins_and_hashes_near_price_are_not_models(self):
+        # live run 2: carousel ids b0d2y1bldt / ec1eb99eca6c were taken for other models; now only the name decides
+        self.assertEqual(self.amounts(f"{HP15_NAME} img ec1eb99eca6c /dp/B0D2Y1BLDT ₹52,990"), ([52990], []))
+        self.assertEqual(self.amounts("Similar items /dp/B0D2Y1BLDT ec1eb99eca6c ₹69,990"),
+                         ([], [(69990, 'product not named nearby')]))
 
     def test_without_known_model_any_model_nearby_is_other(self):
         self.assertEqual(self.amounts("HP 15 fd0070TU ₹52,990", url="https://www.flipkart.com/hp/p/itm1"),

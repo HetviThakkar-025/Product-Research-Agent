@@ -212,15 +212,21 @@ NON_MODEL_PREFIXES = ('dimensity', 'snapdragon', 'helio', 'exynos', 'tensor', 'b
 def model_numbers(product_name):
     """
     Model-number-like tokens in a product name, e.g. RT38HG5A42S8HL, 82RK0085IN, fq5112tu.
-    Requires 8+ chars with 2+ letters and 3+ digits, so CPU/GPU/RAM tokens (i5-1235U, RTX4050, 16GB) don't count.
+    Requires 8+ chars mixing 2+ letters and 3+ digits, so CPU/GPU/RAM tokens (i5-1235U, RTX4050, 16GB) and
+    all-letter or all-digit tokens don't count; Amazon ASINs and long hex ids (image hashes) are not models either.
     """
     return {token for token in re.findall(r'[a-z0-9]+', product_name.lower()) if _is_model_token(token)}
+
+
+ASIN_RE = re.compile(r'b0[a-z0-9]{8}')     # Amazon product id, e.g. b0d2y1bldt
+LONG_HEX_RE = re.compile(r'[0-9a-f]{12,}')  # image/asset hashes, e.g. ec1eb99eca6c
 
 
 def _is_model_token(token):
     letters = sum(ch.isalpha() for ch in token)
     digits = sum(ch.isdigit() for ch in token)
-    return len(token) >= 8 and letters >= 2 and digits >= 3 and not token.startswith(NON_MODEL_PREFIXES)
+    return (len(token) >= 8 and letters >= 2 and digits >= 3 and not token.startswith(NON_MODEL_PREFIXES)
+            and not ASIN_RE.fullmatch(token) and not LONG_HEX_RE.fullmatch(token))
 
 
 def _spec_tokens(text):
@@ -343,9 +349,9 @@ NAME_PREFIX_CHARS = 40
 
 
 def own_product_ids(candidate):
-    """Model numbers known to be the candidate's (name, dropped duplicates, own result title) plus its page's ASIN / itm id."""
+    """Model numbers known to be the candidate's (name, dropped duplicates, own result title) plus its page's Flipkart itm id."""
     ids = model_numbers(candidate['product_name']) | set(candidate.get('model_numbers', []))
-    page_id = re.search(r'/(?:dp|p)/([a-z0-9]+)$', normalize_product_url(candidate.get('source_url', '')))
+    page_id = re.search(r'/p/(itm[a-z0-9]+)$', normalize_product_url(candidate.get('source_url', '')))
     if page_id:
         ids.add(page_id.group(1))
     return ids
