@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 import traceback
-from agent import run_pipeline
+from agent import run_pipeline_stream
 from tools import DailyQuotaExceeded
 
 try:
@@ -75,39 +75,73 @@ if user_input:
         st.session_state.context = user_input
 
     with st.chat_message("assistant"):
-        status = st.empty()
+        status_box = st.status("Researching...", expanded=True)
+        final = {}
 
-        def update_status(msg):
-            status.write(msg)
+        def report_text(events, first_token=""):
+            """Only the report's text, for st.write_stream; progress and the final result are handled on the way."""
+            if first_token:
+                yield first_token
+            for event in events:
+                if event["type"] == "token":
+                    yield event["text"]
+                elif event["type"] == "progress":
+                    status_box.write(event["text"])  # e.g. a rate-limit wait while the report is written
+                elif event["type"] == "final":
+                    final.update(event)
 
         try:
-            result = run_pipeline(st.session_state.context,
-                                  progress_callback=update_status)
-            status.empty()
+            events = run_pipeline_stream(st.session_state.context)
+            headline, first_token = None, ""
+            with status_box:
+                for event in events:
+                    if event["type"] == "progress":
+                        st.write(event["text"])
+                    elif event["type"] == "headline":
+                        headline = event["text"]
+                        break
+                    elif event["type"] == "token":
+                        first_token = event["text"]
+                        break
+                    elif event["type"] == "final":
+                        final.update(event)
+                        break
 
-            if result['status'] == 'clarify':
-                reply = result['question']
+            if final.get("status") == "clarify":
+                status_box.update(label="Need one more detail", state="complete", expanded=False)
+                reply = final["question"]
+                st.markdown(reply, unsafe_allow_html=True)
                 st.session_state.awaiting_clarification = True
             else:
-                reply = result['report']
-                reply += (
+                status_box.update(label="Writing the report...", state="running", expanded=False)
+                if headline:
+                    st.markdown(f"**{headline}**")
+                streamed = st.write_stream(report_text(events, first_token))
+                report = final.get("report") or streamed
+                if not streamed:
+                    st.markdown(report, unsafe_allow_html=True)
+                status_box.update(label="Research complete", state="complete", expanded=False)
+
+                footer = (
                     "\n\n---\n"
                     "*This search is complete — I won't treat anything you type next as a follow-up. "
                     "Just type a new request below, or hit **New search** above to start fresh.*"
                 )
+                st.markdown(footer)
+                reply = (f"**{headline}**\n\n" if headline else "") + report + footer
                 st.session_state.awaiting_clarification = False
 
         except DailyQuotaExceeded:
-            status.empty()
+            status_box.update(label="Daily usage limit reached", state="error", expanded=False)
             reply = "I've hit today's free usage limit for the search/AI service. Please come back after it resets (usually within a few hours) and try again."
+            st.markdown(reply, unsafe_allow_html=True)
             st.session_state.awaiting_clarification = False
 
-        except Exception as e:
+        except Exception:
             traceback.print_exc()
-            status.empty()
+            status_box.update(label="Something went wrong", state="error", expanded=False)
             reply = "Sorry, something went wrong while researching this — please try again in a moment."
+            st.markdown(reply, unsafe_allow_html=True)
             st.session_state.awaiting_clarification = False
-
-        st.markdown(reply, unsafe_allow_html=True)
 
     st.session_state.messages.append({"role": "assistant", "content": reply})
