@@ -113,6 +113,15 @@ def build_summary(counter, search_totals, all_candidates):
     return lines
 
 
+def rejection_lines(all_candidates):
+    """Every rejected ₹ amount; only written to the run file (the console gets one summary line per source)."""
+    lines = ["Price rejections (full list):"]
+    for c in all_candidates:
+        for r in c.get("price_rejections", []):
+            lines.append(f"  - {c['product_name'][:50]} | {r['source']} | {r['amount']} | {r['reason']} | {r['url']}")
+    return lines if len(lines) > 1 else []
+
+
 def save_run(query, final_report, summary_lines):
     """Writes the report and summary to runs/run-<timestamp>.txt, so a console problem can't lose them."""
     RUNS_DIR.mkdir(exist_ok=True)
@@ -160,7 +169,7 @@ def main():
         print(final_report)
         print("\n" + "=" * 80)
         print("\n".join(summary_lines))
-        print(f"Saved to {save_run(query, final_report, summary_lines)}")
+        print(f"Saved to {save_run(query, final_report, summary_lines + rejection_lines(all_candidates))}")
 
 
 if __name__ == "__main__":

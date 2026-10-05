@@ -209,16 +209,33 @@ def _price_sources(candidate):
 
 
 def _attributed_sources(candidate, label, texts):
-    """[(url, ₹ snippets, amounts)] built only from the ₹ amounts attribute_prices ties to this candidate; logs the rest."""
+    """
+    [(url, ₹ snippets, amounts)] built only from the ₹ amounts attribute_prices ties to this candidate.
+    Rejected amounts are kept in full on candidate['price_rejections'] (for the run file) and logged as one summary line.
+    """
     sources = []
+    rejections = []
     for url, text in texts:
         kept, rejected = attribute_prices(candidate, text)
-        for amount, reason in dict.fromkeys(rejected):  # "₹X₹X" repeats are logged once
-            print(f"Rejected price: {reason} for {candidate['product_name']}: {amount} ({label}: {url})")
+        for amount, reason in dict.fromkeys(rejected):  # "₹X₹X" repeats are counted once
+            rejections.append({'source': label, 'url': url, 'amount': amount, 'reason': reason})
         if kept:
             amounts = set().union(*(rupee_amounts(m.group()) for m in kept))
             sources.append((url, extract_price_snippets(text, matches=kept), amounts))
+
+    if rejections:
+        candidate.setdefault('price_rejections', []).extend(rejections)
+        print(f"Rejected prices for {candidate['product_name']} ({label}): {summarize_rejections(rejections)}")
     return sources
+
+
+def summarize_rejections(rejections, examples=3):
+    """'12 product not named nearby (e.g. 71800, 71790, 85000), 2 other model nearby (e.g. 299, 69409)'."""
+    by_reason = {}
+    for r in rejections:
+        by_reason.setdefault(r['reason'].split(' (')[0], []).append(r['amount'])
+    return ", ".join(f"{len(amounts)} {reason} (e.g. {', '.join(str(a) for a in amounts[:examples])})"
+                     for reason, amounts in by_reason.items())
 
 
 def _matching_fallback_results(candidate):

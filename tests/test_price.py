@@ -10,6 +10,7 @@ import unittest
 from support import FakeGroq, FakeTavily, load_fixture
 
 import graph
+import test_graph
 import tools
 
 HP15_URL = "https://www.amazon.in/HP-i5-1235U-Anti-Glare-Micro-Edge-15-6-inch/dp/B0DCG26YC5"
@@ -194,11 +195,24 @@ class CheckPricesTest(unittest.TestCase):
         # the live run's case: the fallback hit the candidate's own page, whose content is a carousel of other laptops
         for extra in ({}, {'model_numbers': ['fd0070tu']}):
             [c], log, fake = check_prices([candidate(**extra)], lambda prompt: 47880)
-            self.assertIn(f"Rejected price: other model nearby (fy5007tu) for {HP15_NAME}: 246490 (fallback_search: {HP15_URL})", log)
-            self.assertIn(f"Rejected price: product not named nearby for {HP15_NAME}: 47880 (fallback_search: {HP15_URL})", log)
+            # one summary line per candidate and source; the full list stays on the candidate for the run file
+            self.assertIn(f"Rejected prices for {HP15_NAME} (fallback_search): 1 other model nearby (e.g. 246490), "
+                          f"4 product not named nearby (e.g. 47880, 100990, 47839)\n", log)
+            self.assertEqual(log.count("Rejected prices for"), 1)
+            self.assertEqual(c['price_rejections'][0],
+                             {'source': 'fallback_search', 'url': HP15_URL, 'amount': 246490, 'reason': 'other model nearby (fy5007tu)'})
+            self.assertEqual(sorted(r['amount'] for r in c['price_rejections']), [47839, 47880, 100990, 126990, 246490])
             self.assertNotIn("Price-Extraction", fake.names())
             self.assertIsNone(c['price'])
             self.assertEqual(c['within_budget'], "unknown")
+
+    def test_full_rejection_list_goes_to_run_file_lines(self):
+        [c], log, _ = check_prices([candidate()], lambda prompt: 47880)
+        lines = test_graph.rejection_lines([c, candidate("no rejections")])
+        self.assertEqual(lines[0], "Price rejections (full list):")
+        self.assertEqual(len(lines), 6)
+        self.assertIn(f"| fallback_search | 246490 | other model nearby (fy5007tu) | {HP15_URL}", lines[1])
+        self.assertEqual(test_graph.rejection_lines([candidate()]), [])
 
     def test_implausible_price_rejected(self):
         snippet = "HP 15 fd0070TU Buy for ₹2,46,490"
