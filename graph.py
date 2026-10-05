@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded
+from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, budget_note, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -351,7 +351,7 @@ def report(state, config):
     final_qualified = [c for c in all_candidates if is_qualified(c)]
 
     _log(config, "Generating final report...")
-    report_candidates = select_report_candidates(all_candidates, top_n=3)
+    report_candidates = select_report_candidates(all_candidates, top_n=4)
     is_degraded = len(final_qualified) < MIN_QUALIFIED
 
     realistic_budget = None
@@ -373,7 +373,8 @@ def report(state, config):
             'reasoning': c.get('reasoning'),
             'source_url': c.get('source_url'),
             'price_source': c.get('price_source'),
-            'price_source_url': c.get('price_source_url')
+            'price_source_url': c.get('price_source_url'),
+            'budget_note': budget_note(c, requirements['budget'])
         })
 
     report_text = invoke_with_retry(report_chain, {

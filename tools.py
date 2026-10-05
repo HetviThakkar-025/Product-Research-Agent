@@ -493,18 +493,33 @@ def search_price_fallback(product_name):
     return results
 
 
-def select_report_candidates(all_candidates, top_n=3):
+def select_report_candidates(all_candidates, top_n=4):
+    """
+    Verified prices first: within budget (best fit first), then over budget (smallest gap first, i.e. cheapest);
+    candidates without a verified price last (best fit first).
+    """
     def sort_key(c):
-        # verified in budget first, then verified over budget, then price unknown; best fit first within each group
         if c.get('within_budget') is True:
-            budget_group = 0
-        elif c.get('price') is not None:
-            budget_group = 1
-        else:
-            budget_group = 2
-        return (budget_group, -(c.get('fit_score') or 0))
+            return (0, -(c.get('fit_score') or 0), c['price'] or 0)
+        if c.get('price') is not None:
+            return (1, c['price'], -(c.get('fit_score') or 0))
+        return (2, -(c.get('fit_score') or 0), 0)
 
     return sorted(all_candidates, key=sort_key)[:top_n]
+
+
+JUST_OVER_BUDGET = 0.05  # a verified price less than 5% over budget is reported as "just over budget"
+
+
+def budget_note(candidate, budget):
+    """'just over budget by ₹499 (0.8%)' for a verified price under 5% over budget, else None."""
+    price = candidate.get('price')
+    if price is None or budget is None or price <= budget:
+        return None
+    gap = price - budget
+    if gap / budget < JUST_OVER_BUDGET:
+        return f"just over budget by {format_inr(gap)} ({gap / budget:.1%})"
+    return None
 
 
 def format_inr(amount):
@@ -534,9 +549,9 @@ def recommendation_headline(candidates, budget):
     if priced:
         closest = min(priced, key=lambda c: c['price'] - budget)
         gap = closest['price'] - budget
+        over = budget_note(closest, budget) or f"{format_inr(gap)} ({gap / budget:.1%}) over budget"
         return (f"No candidate has a verified price within the {format_inr(budget)} budget; the closest is "
-                f"{closest['product_name']} at {format_inr(closest['price'])}, {format_inr(gap)} "
-                f"({gap / budget:.1%}) over budget.")
+                f"{closest['product_name']} at {format_inr(closest['price'])}, {over}.")
     within = f" within the {format_inr(budget)} budget" if budget is not None else ""
     return f"No candidate has a verified price, so none can be recommended as a purchase{within}."
 

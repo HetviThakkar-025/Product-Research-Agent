@@ -44,6 +44,18 @@ class RankingTest(unittest.TestCase):
         self.assertEqual(self.names(LIVE_RUN_2, top_n=4),
                          ['HP Laptop 15 fd0022TU', 'HP 15s 15-FD0651TU', 'Lenovo V15', 'HP 15s FY5008TU'])
 
+    def test_live_run_3_verified_prices_first_by_gap_then_unpriced_max_4(self):
+        self.assertEqual([c['product_name'] for c in tools.select_report_candidates(LIVE_RUN_3)],
+                         ['HP 15 fd0577TU', 'Samsung Galaxy Book 4', 'HP Laptop 15 fd0022TU', 'Acer Aspire 5 15 A515-58P-58FK'])
+
+    def test_over_budget_ordered_by_gap_not_fit(self):
+        candidates = [cand('over-far-fit-10', 90000, False, 10), cand('over-near-fit-3', 61000, False, 3)]
+        self.assertEqual(self.names(candidates), ['over-near-fit-3', 'over-far-fit-10'])
+
+    def test_in_budget_by_fit_then_price(self):
+        candidates = [cand('in-7-55k', 55000, True, 7), cand('in-9', 59000, True, 9), cand('in-7-45k', 45000, True, 7)]
+        self.assertEqual(self.names(candidates), ['in-9', 'in-7-45k', 'in-7-55k'])
+
     def test_in_budget_beats_higher_fit_unknown(self):
         self.assertEqual(self.names([cand('unknown-10', None, 'unknown', 10), cand('in-5', 40000, True, 5)], top_n=1),
                          ['in-5'])
@@ -63,7 +75,19 @@ class HeadlineTest(unittest.TestCase):
     def test_live_run_3_closest_over_budget_with_gap(self):
         self.assertEqual(tools.recommendation_headline(LIVE_RUN_3, 60000),
                          "No candidate has a verified price within the ₹60,000 budget; the closest is HP 15 fd0577TU "
-                         "at ₹60,499, ₹499 (0.8%) over budget.")
+                         "at ₹60,499, just over budget by ₹499 (0.8%).")
+
+    def test_closest_far_over_budget_gives_plain_gap(self):
+        self.assertEqual(tools.recommendation_headline([cand('far', 73990, False, 9)], 60000),
+                         "No candidate has a verified price within the ₹60,000 budget; the closest is far at ₹73,990, "
+                         "₹13,990 (23.3%) over budget.")
+
+    def test_budget_note_only_under_5_percent(self):
+        self.assertEqual(tools.budget_note(cand('a', 62999, False, 5), 60000), "just over budget by ₹2,999 (5.0%)")
+        self.assertIsNone(tools.budget_note(cand('b', 63000, False, 5), 60000))
+        self.assertIsNone(tools.budget_note(cand('c', 59000, True, 5), 60000))
+        self.assertIsNone(tools.budget_note(cand('d', None, 'unknown', 5), 60000))
+        self.assertIsNone(tools.budget_note(cand('e', 61000, True, 5), None))
 
     def test_no_verified_price(self):
         self.assertEqual(tools.recommendation_headline([cand('unknown-10', None, 'unknown', 10)], 60000),
@@ -109,6 +133,10 @@ class ReportPromptTest(unittest.TestCase):
         self.assertIn(HEADLINE_INSTRUCTION.replace("{recommendation_headline}", headline), prompt)
         self.assertTrue(update["is_degraded"])
         self.assertNotIn("Report check", log)
+        self.assertEqual(len(update["report_candidates"]), 4)
+        self.assertIn("'budget_note': 'just over budget by ₹499 (0.8%)'", prompt)
+        self.assertIn("'product_name': 'HP 15 fd0577TU'", prompt)
+        self.assertNotIn("HP 250R G9", prompt)
 
     def test_missing_headline_is_logged(self):
         _, _, log = self.run_report(LIVE_RUN_3, lambda p: "## 5. Final Recommendation\nAcer is the strongest candidate.")
