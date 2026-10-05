@@ -296,6 +296,8 @@ Write the report with these sections, in Markdown:
 
 Only use the data provided above - do not invent specs, prices, or products not listed in the candidates
 
+A candidate whose price is null must be labelled "price unverified" and must never be called the best or the clear top choice; if no candidate has a verified price within budget, say so first, before the Requirements Summary.
+
 If a spec is not present in known_specs for a candidate, you must state it is unknown/not listed — 
 never suggest, estimate, or imply what the value probably is, even based on the brand or product line's typical specs""",
     input_variables=['category', 'usecase', 'budget', 'non_negotiable_specs',

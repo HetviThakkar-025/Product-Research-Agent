@@ -495,12 +495,16 @@ def search_price_fallback(product_name):
 
 def select_report_candidates(all_candidates, top_n=3):
     def sort_key(c):
-        # within_budget True sorts first (False=0 lower priority than True=1... need True first)
-        budget_priority = 1 if c.get('within_budget') is True else 0
-        return (budget_priority, c.get('fit_score', 0))
+        # verified in budget first, then price unknown, then over budget; best fit first within each group
+        if c.get('within_budget') is True:
+            budget_group = 0
+        elif c.get('price') is None:
+            budget_group = 1
+        else:
+            budget_group = 2
+        return (budget_group, -(c.get('fit_score') or 0))
 
-    sorted_candidates = sorted(all_candidates, key=sort_key, reverse=True)
-    return sorted_candidates[:top_n]
+    return sorted(all_candidates, key=sort_key)[:top_n]
 
 
 def suggest_realistic_budget(candidates):
