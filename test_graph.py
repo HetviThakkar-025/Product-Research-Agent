@@ -3,9 +3,12 @@ Runs the sample query through the LangGraph pipeline and prints each node as it 
 so the step order / stop behaviour can be compared against the old run_pipeline loop.
 
 Usage: python test_graph.py ["your query"]
+The report and summary are also saved to runs/run-<timestamp>.txt (UTF-8).
 """
 import sys
 from collections import Counter
+from datetime import datetime
+from pathlib import Path
 
 from langchain_core.callbacks import BaseCallbackHandler
 
@@ -13,6 +16,7 @@ from graph import build_graph, make_config, is_qualified
 from tools import is_product_page_url
 
 SAMPLE_QUERY = "I want to buy a referigerator, budget 60000, family use"
+RUNS_DIR = Path(__file__).resolve().parent / "runs"
 
 
 class LLMCallCounter(BaseCallbackHandler):
@@ -60,44 +64,67 @@ def summarize(node, update):
     return ""
 
 
+def build_summary(counter, search_totals, all_candidates):
+    lines = [
+        f"LLM requests: {sum(counter.calls.values())} {dict(counter.calls)}",
+        f"LLM errors:   {sum(counter.errors.values())} {dict(counter.errors)}",
+        f"LLM tokens:   {counter.tokens['prompt'] + counter.tokens['completion']} "
+        f"(prompt {counter.tokens['prompt']}, completion {counter.tokens['completion']})",
+        f"Search product-page hit rate: {search_totals['product_pages']}/{search_totals['results']}",
+    ]
+    priced = [c for c in all_candidates if c.get("price") is not None]
+    lines.append(f"Candidates priced: {len(priced)}/{len(all_candidates)} "
+                 f"{dict(Counter(c.get('price_source') for c in all_candidates))}")
+    for c in all_candidates:
+        lines.append(f"  - {c['product_name'][:70]} | price={c.get('price')} via {c.get('price_source')} {c.get('price_source_url') or ''}")
+    return lines
+
+
+def save_run(query, final_report, summary_lines):
+    """Writes the report and summary to runs/run-<timestamp>.txt, so a console problem can't lose them."""
+    RUNS_DIR.mkdir(exist_ok=True)
+    path = RUNS_DIR / f"run-{datetime.now():%Y%m%d-%H%M%S}.txt"
+    path.write_text(f"Query: {query}\n\n{final_report}\n\n" + "\n".join(summary_lines) + "\n", encoding="utf-8")
+    return path
+
+
 def main():
+    # Windows uses cp1252 for redirected output, which cannot encode ₹ and crashed the report print
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
     query = sys.argv[1] if len(sys.argv) > 1 else SAMPLE_QUERY
     graph = build_graph()
     config = make_config(progress_callback=lambda msg: print(f"    [progress] {msg}"))
     counter = LLMCallCounter()
     config["callbacks"] = [counter]
 
-    final_report = None
+    final_report = "(no report: the run did not finish)"
     all_candidates = []
     search_totals = Counter()
-    for chunk in graph.stream({"user_query": query}, config=config, stream_mode="updates"):
-        for node, update in chunk.items():
-            print(f"==> {node}: {summarize(node, update or {})}")
-            if node == "search":
-                urls = list(update.get("search_snippets", {}))
-                search_totals["results"] += len(urls)
-                search_totals["product_pages"] += sum(is_product_page_url(u) for u in urls)
-            elif node == "merge":
-                all_candidates = update["all_candidates"]
-            if node == "report":
-                final_report = update["report"]
-            elif node == "intake" and "clarify_question" in update:
-                final_report = update["clarify_question"]
-
-    print("\n" + "=" * 80 + "\n")
-    print(final_report)
-
-    print("\n" + "=" * 80)
-    print(f"LLM requests: {sum(counter.calls.values())} {dict(counter.calls)}")
-    print(f"LLM errors:   {sum(counter.errors.values())} {dict(counter.errors)}")
-    print(f"LLM tokens:   {counter.tokens['prompt'] + counter.tokens['completion']} "
-          f"(prompt {counter.tokens['prompt']}, completion {counter.tokens['completion']})")
-    print(f"Search product-page hit rate: {search_totals['product_pages']}/{search_totals['results']}")
-    priced = [c for c in all_candidates if c.get("price") is not None]
-    print(f"Candidates priced: {len(priced)}/{len(all_candidates)} "
-          f"{dict(Counter(c.get('price_source') for c in all_candidates))}")
-    for c in all_candidates:
-        print(f"  - {c['product_name'][:70]} | price={c.get('price')} via {c.get('price_source')} {c.get('price_source_url') or ''}")
+    try:
+        for chunk in graph.stream({"user_query": query}, config=config, stream_mode="updates"):
+            for node, update in chunk.items():
+                print(f"==> {node}: {summarize(node, update or {})}")
+                if node == "search":
+                    urls = list(update.get("search_snippets", {}))
+                    search_totals["results"] += len(urls)
+                    search_totals["product_pages"] += sum(is_product_page_url(u) for u in urls)
+                elif node == "merge":
+                    all_candidates = update["all_candidates"]
+                if node == "report":
+                    final_report = update["report"]
+                elif node == "intake" and "clarify_question" in update:
+                    final_report = update["clarify_question"]
+    finally:
+        # also runs when the pipeline raises (e.g. daily quota), so the partial summary is kept
+        summary_lines = build_summary(counter, search_totals, all_candidates)
+        print("\n" + "=" * 80 + "\n")
+        print(final_report)
+        print("\n" + "=" * 80)
+        print("\n".join(summary_lines))
+        print(f"Saved to {save_run(query, final_report, summary_lines)}")
 
 
 if __name__ == "__main__":
