@@ -39,6 +39,11 @@ def is_qualified(candidate):
     )
 
 
+def spec_key_names(requirements):
+    """Call B's spec keys (non-negotiable then negotiable), which Calls C and D are told to reuse verbatim."""
+    return list(requirements['non_negotiable_specs']) + list(requirements.get('negotiable_specs') or {})
+
+
 def duplicate_of(candidate, known):
     """(existing candidate, reason) if candidate is the same product as one in known, else None."""
     url_key = normalize_product_url(candidate['source_url'])
@@ -111,7 +116,8 @@ def extract_candidates(state, config):
     call_c_chain = prompt3 | str_model_call_c
     candidates_result = invoke_with_retry(call_c_chain, {
         "required_specs": state["requirements"]['non_negotiable_specs'],
-        "raw_results": result
+        "raw_results": result,
+        "spec_keys": spec_key_names(state["requirements"])
     })
 
     verified = filter_hallucinated_candidates(
@@ -149,7 +155,8 @@ def verify_specs(state, config):
             'product_name': candidate["product_name"],
             'known_specs': candidate["known_specs"],
             'required_specs': requirements['non_negotiable_specs'],
-            'follow_up_text': follow_up_results
+            'follow_up_text': follow_up_results,
+            'spec_keys': spec_key_names(requirements)
         })
 
         # non-destructive merge: never overwrite a spec we already have
@@ -157,8 +164,10 @@ def verify_specs(state, config):
             if key not in candidate['known_specs']:
                 candidate['known_specs'][key] = value
 
+        # case-insensitive, so "Processor" from Call C/D still counts for Call B's "processor"
+        found_keys = {key.lower() for key in candidate['known_specs']}
         candidate['specs_found'] = all(
-            spec in candidate['known_specs'] for spec in requirements['non_negotiable_specs']
+            spec.lower() in found_keys for spec in requirements['non_negotiable_specs']
         )
 
     return {"new_candidates": new_candidates}

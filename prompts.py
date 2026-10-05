@@ -209,7 +209,7 @@ prompt3 = PromptTemplate(
     Raw search results: {raw_results}
     Task:
     1. Identify distinct, specific products mentioned (ignore results that are generic articles, discussion forums, Q&A sites, listing pages with no single identifiable product, or reviews with no product data).
-    2. For each distinct product, extract whatever specs are actually visible in the result.
+    2. For each distinct product, extract whatever specs are actually visible in the result. Use exactly these key names in known_specs for any of these specs you find: {spec_keys}.
     3. Mark specs_found as true only if a value is present for every required non-negotiable spec key for this product; this only means data was found, not that the values meet the requirement.
     4. Do not invent or assume specs that are not present in the text.
     5. Only extract products that are literally named in the provided raw_results text, and must not supplement with outside knowledge at all.
@@ -217,7 +217,7 @@ prompt3 = PromptTemplate(
     7. Ignore products that are clearly a different category than requested (e.g. a desktop PC when a laptop was requested), even if some specs overlap.
     8. Do not include a candidate if you cannot extract at least 2 concrete specs for it from the text. A product name alone, with no specs, is not a valid candidate — skip it entirely rather than including it with an empty known_specs.
     9. If none of the raw results contain a valid, identifiable product with enough specs, you MUST still respond through the structured tool call with candidates set to an empty list []. Never decline to call the tool or respond as plain conversational text — an empty candidates list is a completely valid and expected answer.""",
-    input_variables=['required_specs', 'raw_results']
+    input_variables=['required_specs', 'raw_results', 'spec_keys']
 )
 
 prompt4 = PromptTemplate(
@@ -229,12 +229,12 @@ prompt4 = PromptTemplate(
     Raw follow-up search text: {follow_up_text}
 
     Task:
-    1. Read the raw follow-up text and identify any spec values for this exact product that are NOT already present in "Already known specs".
+    1. Read the raw follow-up text and identify any spec values for this exact product that are NOT already present in "Already known specs". Use exactly these key names in new_specs for any of these specs you find: {spec_keys}.
     2. Only extract specs that are literally stated in the follow-up text — do not invent or assume values.
     3. Only include specs relevant to the required_specs list; ignore irrelevant details (price, reviews, accessories, etc.) unless they match a required spec.
     4. Respond only through the structured tool call. Do not write conversational text.""",
     input_variables=['product_name', 'known_specs',
-                     'required_specs', 'follow_up_text']
+                     'required_specs', 'follow_up_text', 'spec_keys']
 )
 
 prompt5 = PromptTemplate(

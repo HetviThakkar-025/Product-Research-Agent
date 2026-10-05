@@ -77,6 +77,7 @@ def build_summary(counter, search_totals, all_candidates):
                  f"{dict(Counter(c.get('price_source') for c in all_candidates))}")
     for c in all_candidates:
         lines.append(f"  - {c['product_name'][:70]} | price={c.get('price')} via {c.get('price_source')} {c.get('price_source_url') or ''}")
+        lines.append(f"      specs_found={c.get('specs_found')} known_specs={c.get('known_specs')}")
     return lines
 
 
@@ -107,6 +108,9 @@ def main():
         for chunk in graph.stream({"user_query": query}, config=config, stream_mode="updates"):
             for node, update in chunk.items():
                 print(f"==> {node}: {summarize(node, update or {})}")
+                if node in ("extract_candidates", "verify_specs"):
+                    for c in update["new_candidates"]:
+                        print(f"      known_specs[{c['product_name'][:40]}]: {c.get('known_specs')}")
                 if node == "search":
                     urls = list(update.get("search_snippets", {}))
                     search_totals["results"] += len(urls)
