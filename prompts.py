@@ -297,7 +297,8 @@ Write the report with these sections, in Markdown:
 
 Only use the data provided above - do not invent specs, prices, or products not listed in the candidates
 
-A candidate whose price is null must be labelled "price unverified" and must never be called the best or the clear top choice; if no candidate has a verified price within budget, say so first, before the Requirements Summary.
+A candidate whose price is null must be labelled "price unverified" and must never be called the best or the clear top choice.
+Start the report directly with section 1, the Requirements Summary; write nothing before it.
 Begin the Final Recommendation section with this sentence, copied verbatim: "{recommendation_headline}" Then add only supporting detail for it, and never call a candidate without a verified price the best, strongest, top or recommended option.
 
 If a spec is not present in known_specs for a candidate, you must state it is unknown/not listed — 

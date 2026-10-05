@@ -547,6 +547,55 @@ def budget_note(candidate, budget):
     return None
 
 
+def _section_heading_re(number, title):
+    """A report section heading line such as "## 5. Final Recommendation" or "**5. Final Recommendation**"."""
+    return re.compile(rf'^[ \t]*(?:#{{1,6}}[ \t]*)?(?:\*\*)?[ \t]*{number}\.[ \t]*(?:\*\*)?[ \t]*{title}',
+                      re.IGNORECASE | re.MULTILINE)
+
+
+SECTION_1_RE = _section_heading_re(1, 'Requirements Summary')
+SECTION_5_RE = _section_heading_re(5, 'Final Recommendation')
+
+
+def section_1_start(report_text):
+    """Index where the report's section 1 heading starts, else None."""
+    match = SECTION_1_RE.search(report_text)
+    return match.start() if match else None
+
+
+def trim_to_section_1(report_text):
+    """The report from its section 1 heading on (anything the model wrote before it is dropped); unchanged if absent."""
+    start = section_1_start(report_text)
+    return report_text[start:] if start is not None else report_text
+
+
+def _plain(text):
+    """Markdown emphasis/quote marks removed and whitespace collapsed, for comparing sentences."""
+    return re.sub(r'\s+', ' ', re.sub(r'[*_>`]', '', text)).strip()
+
+
+def report_issues(report_text, headline):
+    """Structure problems the report check logs: text before section 1, and section 5 not opening with the headline."""
+    issues = []
+    start = section_1_start(report_text)
+    if start is None:
+        issues.append("no section 1 (Requirements Summary) heading found")
+    elif report_text[:start].strip():
+        issues.append(f"text before section 1 was dropped: {report_text[:start].strip()[:80]!r}")
+
+    section_5 = SECTION_5_RE.search(report_text)
+    if not section_5:
+        issues.append("no section 5 (Final Recommendation) heading found")
+    else:
+        # the first text after the heading, whether on the heading's own line or below it
+        heading_rest, _, below = report_text[section_5.end():].partition('\n')
+        lines = [_plain(line).lstrip(':—–- ') for line in [heading_rest] + below.splitlines()]
+        first_line = next((line for line in lines if line), '')
+        if not first_line.startswith(_plain(headline)):
+            issues.append(f"section 5 does not start with the headline sentence verbatim: {headline!r}")
+    return issues
+
+
 def format_inr(amount):
     """₹ with Indian digit grouping: 132489 -> ₹1,32,489."""
     digits = str(int(amount))

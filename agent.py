@@ -1,4 +1,5 @@
 from graph import build_graph, make_config
+from tools import section_1_start
 
 _graph = build_graph()
 
@@ -35,21 +36,32 @@ def run_pipeline_stream(user_query):
     Same pipeline as run_pipeline, streamed. Yields, in order of arrival:
       {"type": "progress", "text": str}  the progress wording nodes already use, plus Groq rate-limit waits
       {"type": "headline", "text": str}  the Python-built Final Recommendation sentence, just before the report
-      {"type": "token", "text": str}     report text as it is generated (report node only, never reasoning)
+      {"type": "token", "text": str}     report text as it is generated (report node only, never reasoning),
+                                         starting at the section 1 heading like the stored report
       {"type": "final", **result}        last; result is the dict run_pipeline returns
     Exceptions (e.g. DailyQuotaExceeded) propagate to the caller.
     """
     state = {"user_query": user_query}
+    held_back, report_started = "", False  # report text is held until its section 1 heading appears
     for mode, chunk in _graph.stream({"user_query": user_query}, config=make_config(), stream_mode=STREAM_MODES):
         if mode == "custom":
             yield chunk
         elif mode == "messages":
             message, metadata = chunk
             if metadata.get("langgraph_node") == "report" and isinstance(message.content, str) and message.content:
-                yield {"type": "token", "text": message.content}
+                if report_started:
+                    yield {"type": "token", "text": message.content}
+                    continue
+                held_back += message.content
+                start = section_1_start(held_back)
+                if start is not None:
+                    report_started = True
+                    yield {"type": "token", "text": held_back[start:]}
         elif mode == "updates":
             for update in chunk.values():
                 state.update(update or {})  # every state key uses the default overwrite reducer
+    if held_back and not report_started:
+        yield {"type": "token", "text": held_back}  # no section 1 heading: send the report as written
     yield {"type": "final", **_result(state)}
 
 

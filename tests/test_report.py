@@ -10,8 +10,8 @@ import prompts
 import tools
 
 INSTRUCTION = ('A candidate whose price is null must be labelled "price unverified" and must never be called the best '
-               'or the clear top choice; if no candidate has a verified price within budget, say so first, before the '
-               'Requirements Summary.')
+               'or the clear top choice.')
+START_INSTRUCTION = "Start the report directly with section 1, the Requirements Summary; write nothing before it."
 HEADLINE_INSTRUCTION = ('Begin the Final Recommendation section with this sentence, copied verbatim: "{recommendation_headline}" '
                         'Then add only supporting detail for it, and never call a candidate without a verified price the '
                         'best, strongest, top or recommended option.')
@@ -112,7 +112,11 @@ class ReportPromptTest(unittest.TestCase):
 
     def test_headline_instruction_added_once(self):
         self.assertEqual(prompts.prompt7.template.count(HEADLINE_INSTRUCTION), 1)
-        self.assertIn(INSTRUCTION + "\n" + HEADLINE_INSTRUCTION + "\n", prompts.prompt7.template)
+        self.assertIn(INSTRUCTION + "\n" + START_INSTRUCTION + "\n" + HEADLINE_INSTRUCTION + "\n", prompts.prompt7.template)
+
+    def test_no_warning_before_requirements_summary_instruction(self):
+        self.assertNotIn("say so first", prompts.prompt7.template)
+        self.assertEqual(prompts.prompt7.template.count(START_INSTRUCTION), 1)
 
     def run_report(self, candidates, answer):
         fake = FakeGroq({"text": answer}).install()
@@ -128,7 +132,8 @@ class ReportPromptTest(unittest.TestCase):
 
     def test_report_prompt_carries_instructions_and_headline(self):
         headline = tools.recommendation_headline(LIVE_RUN_3, 60000)
-        update, prompt, log = self.run_report(LIVE_RUN_3, lambda p: f"## 5. Final Recommendation\n{headline} More.")
+        update, prompt, log = self.run_report(
+            LIVE_RUN_3, lambda p: f"## 1. Requirements Summary\nLaptop.\n## 5. Final Recommendation\n{headline} More.")
         self.assertIn(INSTRUCTION, prompt)
         self.assertIn(HEADLINE_INSTRUCTION.replace("{recommendation_headline}", headline), prompt)
         self.assertTrue(update["is_degraded"])
@@ -138,9 +143,44 @@ class ReportPromptTest(unittest.TestCase):
         self.assertIn("'product_name': 'HP 15 fd0577TU'", prompt)
         self.assertNotIn("HP 250R G9", prompt)
 
-    def test_missing_headline_is_logged(self):
-        _, _, log = self.run_report(LIVE_RUN_3, lambda p: "## 5. Final Recommendation\nAcer is the strongest candidate.")
-        self.assertIn("Report check: the Final Recommendation headline was not used verbatim", log)
+    def test_headline_elsewhere_than_section_5_start_is_logged(self):
+        headline = tools.recommendation_headline(LIVE_RUN_3, 60000)
+        _, _, log = self.run_report(LIVE_RUN_3, lambda p: (
+            f"## 1. Requirements Summary\n{headline}\n## 5. Final Recommendation\nAcer is the strongest candidate."))
+        self.assertIn("Report check: section 5 does not start with the headline sentence verbatim", log)
+
+    def test_live_check_1_shape_is_logged_and_trimmed(self):
+        # live app check 1: headline repeated above section 1, section 5 paraphrased it
+        headline = tools.recommendation_headline(LIVE_RUN_3, 60000)
+        report = (f"**{headline}**\n\n## 1. Requirements Summary\nFridge.\n\n## 5. Final Recommendation\n"
+                  "Given that the only candidate lacks a verified price, no product can be recommended.")
+        update, _, log = self.run_report(LIVE_RUN_3, lambda p: report)
+        self.assertIn("Report check: text before section 1 was dropped", log)
+        self.assertIn("Report check: section 5 does not start with the headline sentence verbatim", log)
+        self.assertTrue(update["report"].startswith("## 1. Requirements Summary"))
+        self.assertEqual(update["report"].count(headline), 0)
+
+
+class ReportIssuesTest(unittest.TestCase):
+    HEADLINE = "No candidate has a verified price, so none can be recommended as a purchase within the ₹60,000 budget."
+
+    def issues(self, text):
+        return tools.report_issues(text, self.HEADLINE)
+
+    def test_well_formed_report_has_no_issues(self):
+        for section_5 in (f"## 5. Final Recommendation\n\n{self.HEADLINE} Detail.",
+                          f"## 5. Final Recommendation\n> **{self.HEADLINE}**\n\nDetail.",
+                          f"**5. Final Recommendation** — {self.HEADLINE}",
+                          f"### 5. **Final Recommendation**\n{self.HEADLINE}"):
+            self.assertEqual(self.issues(f"## 1. Requirements Summary\nx\n\n{section_5}"), [], section_5)
+
+    def test_missing_sections(self):
+        self.assertEqual(self.issues("Just text."), ["no section 1 (Requirements Summary) heading found",
+                                                     "no section 5 (Final Recommendation) heading found"])
+
+    def test_trim_to_section_1(self):
+        self.assertEqual(tools.trim_to_section_1("**Warning**\n\n## 1. Requirements Summary\nx"), "## 1. Requirements Summary\nx")
+        self.assertEqual(tools.trim_to_section_1("no sections here"), "no sections here")
 
 
 if __name__ == "__main__":

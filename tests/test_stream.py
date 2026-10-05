@@ -76,8 +76,7 @@ class FakeGraphStreamTest(unittest.TestCase):
         self.assertEqual(events, [
             {"type": "progress", "text": "Iteration 1/4 — 0 qualified so far"},
             {"type": "headline", "text": "No candidate has a verified price."},
-            {"type": "token", "text": "## "},
-            {"type": "token", "text": "Report"},
+            {"type": "token", "text": "## Report"},  # no section 1 heading: held back, sent whole at the end
             {"type": "final", "status": "done", "report": "## Report", "candidates": [{"product_name": "a"}],
              "is_degraded": True},
         ])
@@ -91,6 +90,17 @@ class FakeGraphStreamTest(unittest.TestCase):
             ("updates", {"report": DONE_STATE}),
         ]))
         self.assertEqual([e for e in events if e["type"] == "token"], [{"type": "token", "text": "Hello"}])
+
+    def test_text_before_section_1_is_not_streamed(self):
+        events = run_fake(FakeGraph([
+            token("**No candidate has a verified price.**\n\n", "report"),
+            token("## 1. Requirements", "report"),
+            token(" Summary\n", "report"),
+            token("- Budget: 60000", "report"),
+            ("updates", {"report": DONE_STATE}),
+        ]))
+        self.assertEqual([e["text"] for e in events if e["type"] == "token"],
+                         ["## 1. Requirements Summary\n", "- Budget: 60000"])
 
     def test_clarify_path(self):
         events = run_fake(FakeGraph([("updates", {"intake": {"clarify_question": "What is your budget?"}})]))
@@ -124,6 +134,13 @@ class RealGraphStreamTest(unittest.TestCase):
         self.assertEqual(tokens, "## Report for you")
         self.assertEqual(events[-1]["report"], "## Report for you")
         self.assertNotIn("thinking about it", tokens)  # FakeGroq's reasoning chunk
+
+    def test_streamed_text_equals_stored_report_when_model_adds_a_preamble(self):
+        report = "**Warning first**\n\n## 1. Requirements Summary\nLaptop for coding.\n## 5. Final Recommendation\nPick."
+        events = run_real({"text": lambda p: "i5 12th gen 8GB RAM" if "Shorten them" in p else report})
+        tokens = "".join(e["text"] for e in events if e["type"] == "token")
+        self.assertEqual(tokens, "## 1. Requirements Summary\nLaptop for coding.\n## 5. Final Recommendation\nPick.")
+        self.assertEqual(events[-1]["report"], tokens)
 
     def test_final_matches_run_pipeline(self):
         events = run_real()
