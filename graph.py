@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, find_search_snippet, normalize_product_url, model_numbers, RETAIL_DOMAINS, DailyQuotaExceeded
+from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, find_search_snippet, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -14,6 +14,9 @@ SEARCH_MAX_RESULTS = 7  # first attempt; each retry asks for 3 more
 # worst case is ~38 node runs: intake + report + 4 iterations x
 # (start_iteration + 2 x (search + extract_candidates) + verify/price/score/merge)
 RECURSION_LIMIT = 50
+
+# a price outside this multiple of the budget is taken to belong to another product (or be an EMI amount)
+PLAUSIBLE_PRICE_RANGE = (0.25, 3)
 
 
 class AgentState(TypedDict, total=False):
@@ -124,12 +127,15 @@ def extract_candidates(state, config):
         candidates_result["candidates"], result)
 
     # dedupe before verify/price/score so a product already seen costs no further calls
+    all_candidates = copy.deepcopy(state["all_candidates"])
     new_candidates = []
     for candidate in verified:
-        match = duplicate_of(candidate, state["all_candidates"] + new_candidates)
+        match = duplicate_of(candidate, all_candidates + new_candidates)
         if match:
             other, reason = match
             print(f"Dropped duplicate candidate: {candidate['product_name']} (same {reason} as {other['product_name']})")
+            # keep the duplicate's model numbers on the kept candidate, for matching price sources to it
+            other['model_numbers'] = sorted(set(other.get('model_numbers', [])) | model_numbers(candidate['product_name']))
             continue
         new_candidates.append(candidate)
 
@@ -137,7 +143,7 @@ def extract_candidates(state, config):
         candidate['search_snippet'] = find_search_snippet(
             candidate['source_url'], state.get("search_snippets", {}))
 
-    return {"new_candidates": new_candidates}
+    return {"new_candidates": new_candidates, "all_candidates": all_candidates}
 
 
 def verify_specs(state, config):
@@ -180,8 +186,26 @@ def _price_sources(candidate):
         ('search_snippet', lambda: [(source_url, extract_price_snippets(candidate.get('search_snippet', '')))]),
         ('page_extract', lambda: [(source_url, extract_price(source_url))]),
         ('fallback_search', lambda: [(r['url'], extract_price_snippets(r['content']))
-                                     for r in search_price_fallback(candidate['product_name'])]),
+                                     for r in _matching_fallback_results(candidate)]),
     ]
+
+
+def _matching_fallback_results(candidate):
+    """Fallback search results tied to this candidate by product_match; priced ones that aren't are logged and skipped."""
+    matching = []
+    for r in search_price_fallback(candidate['product_name']):
+        if product_match(candidate, r['url'], r['title'], r['content']):
+            matching.append(r)
+        elif rupee_amounts(r['content']):
+            print(f"Rejected price: product mismatch for {candidate['product_name']}: {r['url']} ({r['title'][:80]})")
+    return matching
+
+
+def is_plausible_price(price, budget):
+    if budget is None:
+        return True
+    low, high = PLAUSIBLE_PRICE_RANGE
+    return low * budget <= price <= high * budget
 
 
 def _price_from_snippets(product_name, sources):
@@ -233,6 +257,12 @@ def check_prices(state, config):
                 continue
 
             price_result = result
+            if result['price'] is not None and not is_plausible_price(result['price'], requirements['budget']):
+                low, high = PLAUSIBLE_PRICE_RANGE
+                print(f"Rejected implausible price {result['price']} for {candidate['product_name']}: "
+                      f"outside {low}x-{high}x of budget {requirements['budget']} ({label}: {url})")
+                price_result = {**result, 'price': None}
+                continue
             if result['price'] is not None:
                 price_source, price_source_url = label, url
                 break

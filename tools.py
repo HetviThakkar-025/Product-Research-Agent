@@ -196,6 +196,40 @@ def model_numbers(product_name):
     return models
 
 
+def _spec_tokens(text):
+    """Lowercase word tokens with "8 GB" -> "8gb" and "i5 1235U" -> "i5-1235u", so names and page text compare alike."""
+    text = re.sub(r'(\d)\s+(gb|tb)\b', r'\1\2', text.lower())
+    text = re.sub(r'\b(i[3579])[\s-]+(\d{4,5}[a-z]{0,2})\b', r'\1-\2', text)
+    return set(re.findall(r'[a-z0-9]+(?:[-.][a-z0-9]+)*', text))
+
+
+# CPU models (i5-1235u, 7520u) and memory/storage sizes (8gb, 512gb, 1tb)
+DISTINCTIVE_TOKEN_RE = re.compile(r'i[3579]-\d{4,5}[a-z]{0,2}|\d{4,5}[a-z]{1,2}|\d+(?:gb|tb)')
+
+
+def product_match(candidate, url, title, content):
+    """
+    How a price source is tied to this candidate, else None. In order: one of the candidate's model numbers
+    (its name plus those of dropped duplicates) in the source title/content; the same product page URL;
+    the brand plus every distinctive name token (CPU model, RAM/storage sizes) in the source title/content.
+    """
+    source_text = f"{title} {content}"
+    models = model_numbers(candidate['product_name']) | set(candidate.get('model_numbers', []))
+    if models & model_numbers(source_text):
+        return 'model number'
+
+    if normalize_product_url(url) == normalize_product_url(candidate.get('source_url', '')):
+        return 'same url'
+
+    name_tokens = _spec_tokens(candidate['product_name'])
+    brand = re.findall(r'[a-z0-9]+', candidate['product_name'].lower())[:1]
+    distinctive = {t for t in name_tokens if DISTINCTIVE_TOKEN_RE.fullmatch(t)}
+    source_tokens = _spec_tokens(source_text)
+    if brand and distinctive and brand[0] in source_tokens and distinctive <= source_tokens:
+        return 'brand and specs'
+    return None
+
+
 def filter_by_domain(results, allowed_domains):
     verified_results = []
     for r in results['results']:
@@ -336,7 +370,7 @@ def extract_price(source_url):
 def search_price_fallback(product_name):
     """
     Fallback: price search across all retail domains (not just the candidate's own site).
-    Returns [{'url', 'content'}] for product pages only, so listing-page prices of other products can't leak in.
+    Returns [{'url', 'title', 'content'}] for product pages only, so listing-page prices of other products can't leak in.
     """
     fallback_tool = TavilySearch(max_results=5, include_domains=RETAIL_DOMAINS)
     query = f"{product_name} price"
@@ -347,7 +381,7 @@ def search_price_fallback(product_name):
         url = r['url'].split('?')[0]
         if not any(domain in url for domain in RETAIL_DOMAINS) or not is_product_page_url(url):
             continue
-        results.append({'url': url, 'content': r.get('content') or ''})
+        results.append({'url': url, 'title': r.get('title') or '', 'content': r.get('content') or ''})
     return results
 
 
