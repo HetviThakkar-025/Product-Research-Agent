@@ -289,7 +289,7 @@ Realistic budget suggestion based on actual prices found (if degraded): {realist
 Write the report with these sections, in Markdown:
 1. **Requirements Summary** - brief restatement of what was searched for.
 2. **Top Recommendations** - list each candidate with product name, price, fit score, and a one-line reason.
-3. **Comparison Table** - a Markdown table with columns: Product, Price, Fit Score, Key Specs, Within Budget.
+3. **Comparison Table** - a Markdown table with columns: Product, Price, Fit Score, Key Specs, Required Specs, Within Budget. Fill Required Specs with each candidate's spec_status verbatim, so being within budget is never read as an endorsement.
 4. **Fit Analysis** - for each candidate, note missing or weak specs from the data given.
 5. **Final Recommendation** - pick the single best option and explain why, in plain language.
 6. If is_degraded is true: add a **Budget Gap** section - explain honestly that no candidate fully met all requirements within budget, state the gap using the realistic_budget figure, and suggest the user either raise their budget close to that figure or relax a specific non-negotiable spec.

@@ -625,6 +625,11 @@ def main_failing_spec(candidate):
     return f"the fit threshold (fit score {candidate.get('fit_score')}/10)"
 
 
+def spec_status(candidate):
+    """For the comparison table, next to Within Budget: 'meets all required specs' or 'fails: <main failing spec>'."""
+    return "meets all required specs" if meets_required_specs(candidate) else f"fails: {main_failing_spec(candidate)}"
+
+
 def recommendation_headline(candidates, budget):
     """
     First sentence of the report's Final Recommendation, decided in Python: the best-fit candidate that meets the

@@ -246,6 +246,30 @@ class BudgetGapTest(unittest.TestCase):
         self.assertIn("Budget: no budget limit", self.run_report([cand('a', 50000, True, 8)], budget=None))
 
 
+class SpecStatusTest(unittest.TestCase):
+    def test_meets_or_fails_with_main_spec(self):
+        self.assertEqual(tools.spec_status(cand('ok', 50000, True, 8)), "meets all required specs")
+        self.assertEqual(tools.spec_status(cand('lg', 45990, True, 2, missing=['Capacity: 190 L (required 250 L)'])),
+                         "fails: capacity")
+        self.assertEqual(tools.spec_status(cand('x', 50000, True, 9, specs_found=False)),
+                         "fails: required specs that could not all be confirmed")
+
+    def test_report_candidates_carry_spec_status_and_table_column(self):
+        self.assertIn("columns: Product, Price, Fit Score, Key Specs, Required Specs, Within Budget. Fill Required Specs "
+                      "with each candidate's spec_status verbatim", prompts.prompt7.template)
+        fake = FakeGroq({"text": lambda p: "## 1. Requirements Summary\n## 5. Final Recommendation\nx"}).install()
+        state = {"requirements": {'category': 'fridge', 'usecase': 'family', 'budget': 60000,
+                                  'non_negotiable_specs': {'capacity': '250 L'}, 'negotiable_specs': None},
+                 "all_candidates": [cand('LG 1 Star', 45990, True, 2, missing=['Energy rating: 1 Star (required 3 Star)'])]}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                graph.report(state, {})
+        finally:
+            fake.uninstall()
+        self.assertIn("'within_budget': True", fake.calls[0][1])
+        self.assertIn("'spec_status': 'fails: energy rating'", fake.calls[0][1])
+
+
 class ReportIssuesTest(unittest.TestCase):
     HEADLINE = "No candidate has a verified price, so none can be recommended as a purchase within the ₹60,000 budget."
 
