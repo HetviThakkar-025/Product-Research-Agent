@@ -677,6 +677,19 @@ def report_issues(report_text, headline):
     return issues
 
 
+def drop_empty_specs(requirements):
+    """Call B output without specs whose value is null or empty (the schema allows null so the call can't fail on it)."""
+    cleaned = dict(requirements)
+    for field in ('non_negotiable_specs', 'negotiable_specs'):
+        specs = requirements.get(field)
+        if specs:
+            kept = {k: v for k, v in specs.items() if v is not None and str(v).strip()}
+            if len(kept) < len(specs):
+                print(f"Dropped spec(s) without a value from {field}: {sorted(set(specs) - set(kept))}")
+            cleaned[field] = kept
+    return cleaned
+
+
 def drop_budget_specs(requirements):
     """Call B output without any spec keyed like a budget or price (the budget is never a spec)."""
     cleaned = dict(requirements)

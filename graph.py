@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import call_a_chain, branch_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, request_keywords, drop_budget_specs, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, budget_note, realistic_budget_text, format_inr, spec_status, gap_advice, report_issues, trim_to_section_1, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded, emit_event, emit_progress
+from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, request_keywords, drop_budget_specs, drop_empty_specs, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, budget_note, realistic_budget_text, format_inr, spec_status, gap_advice, report_issues, trim_to_section_1, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded, emit_event, emit_progress
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -104,7 +104,8 @@ def intake(state, config):
     if isinstance(call_b_output, str):
         return {"clarify_question": call_b_output}
     if isinstance(call_b_output, dict) and "non_negotiable_specs" in call_b_output:
-        call_b_output = drop_budget_specs(call_b_output)
+        # null/empty spec values first, before anything (budget filter, search, scoring) uses the specs
+        call_b_output = drop_budget_specs(drop_empty_specs(call_b_output))
 
     return {"requirements": call_b_output, "iteration": 0, "all_candidates": []}
 

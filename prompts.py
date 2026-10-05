@@ -71,13 +71,14 @@ call_b = {
         },
         "non_negotiable_specs": {
             "type": "object",
-            "additionalProperties": {"type": "string"},
+            # null allowed so a spec without a value fails no tool-call validation; such specs are dropped after the call
+            "additionalProperties": {"type": ["string", "null"]},
             "description": "Dict of spec name to required value, for specs that must be met"
         },
         "negotiable_specs": {
             "type": ["object", "null"],
             "description": "Dict of spec name to required value, for specs that are less important which can be removed if there are budget constraints, null if all specs are important",
-            "additionalProperties": {"type": "string"}
+            "additionalProperties": {"type": ["string", "null"]}
         }
     },
     "required": ["usecase", "budget", "non_negotiable_specs"]
