@@ -69,7 +69,7 @@ class IntakeClarifyLoopTest(unittest.TestCase):
 
     def test_budget_only_answer_proceeds_with_general_use(self):
         update, fake, log = self.run_intake(self.BUDGET_ONLY, previous_question=QUESTION)
-        self.assertNotIn("clarify_question", update)
+        self.assertIsNone(update["clarify_question"])  # cleared, so a checkpointed thread moves on
         self.assertEqual(update["requirements"]["category"], "refrigerator")
         self.assertEqual(fake.names(), ["Call-A", "Call-B"])  # no extra Call A
         self.assertIn("usecase is -> general everyday use", fake.calls[1][1])

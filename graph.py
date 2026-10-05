@@ -35,6 +35,7 @@ class AgentState(TypedDict, total=False):
     report: str
     report_candidates: list
     is_degraded: bool
+    recommendation_headline: str   # the Python-built Final Recommendation sentence, kept for reopening a saved search
 
 
 def is_qualified(candidate):
@@ -107,7 +108,8 @@ def intake(state, config):
         # null/empty spec values first, before anything (budget filter, search, scoring) uses the specs
         call_b_output = drop_budget_specs(drop_empty_specs(call_b_output))
 
-    return {"requirements": call_b_output, "iteration": 0, "all_candidates": []}
+    # clarify_question cleared: with a checkpointer, a clarify answer reuses the thread whose state still holds the question
+    return {"requirements": call_b_output, "iteration": 0, "all_candidates": [], "clarify_question": None}
 
 
 def start_iteration(state, config):
@@ -442,14 +444,15 @@ def report(state, config):
     return {
         "report": report_text,
         "report_candidates": report_candidates,
-        "is_degraded": is_degraded
+        "is_degraded": is_degraded,
+        "recommendation_headline": headline
     }
 
 
 # ---------- conditional edges ----------
 
 def route_after_intake(state):
-    return END if "clarify_question" in state else "start_iteration"
+    return END if state.get("clarify_question") else "start_iteration"
 
 
 def route_next_iteration(state, config):
@@ -519,8 +522,11 @@ def build_graph(checkpointer=None):
     return builder.compile(checkpointer=checkpointer)
 
 
-def make_config(progress_callback=None):
-    return {
-        "recursion_limit": RECURSION_LIMIT,
-        "configurable": {"progress_callback": progress_callback},
-    }
+def make_config(progress_callback=None, thread_id=None):
+    """Run config; thread_id selects the checkpointer thread. The callback is only added when given (it isn't serializable)."""
+    configurable = {}
+    if progress_callback:
+        configurable["progress_callback"] = progress_callback
+    if thread_id:
+        configurable["thread_id"] = thread_id
+    return {"recursion_limit": RECURSION_LIMIT, "configurable": configurable}

@@ -7,3 +7,4 @@ groq
 streamlit
 python-dotenv
 langgraph
+langgraph-checkpoint-sqlite
