@@ -180,10 +180,12 @@ def verify_specs(state, config):
                 'spec_keys': spec_key_names(requirements)
             })
 
-            # non-destructive merge: never overwrite a spec we already have
+            # non-destructive merge: never overwrite a spec we already have, whatever its key's casing
+            known_keys = {key.lower() for key in candidate['known_specs']}
             for key, value in newspecs['new_specs'].items():
-                if key not in candidate['known_specs']:
+                if key.lower() not in known_keys:
                     candidate['known_specs'][key] = value
+                    known_keys.add(key.lower())
         else:
             print(f"Skipped Call D for {candidate['product_name']}: spec search returned nothing")
 

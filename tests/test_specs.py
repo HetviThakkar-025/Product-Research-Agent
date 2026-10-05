@@ -44,6 +44,10 @@ class SpecsFoundTest(unittest.TestCase):
         candidate, _ = verify({'CPU': 'i5-1235U', 'RAM': '8GB', 'SSD': '512GB', 'Screen': '15.6"'}, {'keyboard': 'Backlit'})
         self.assertFalse(candidate['specs_found'])
 
+    def test_merge_compares_keys_case_insensitively_keeping_first_casing(self):
+        candidate, _ = verify({'processor': 'i5-1235U'}, {'Processor': 'i3-1215U', 'Keyboard': 'Backlit', 'keyboard': 'Full size'})
+        self.assertEqual(candidate['known_specs'], {'processor': 'i5-1235U', 'Keyboard': 'Backlit'})
+
     def test_merge_never_overwrites_known_spec(self):
         candidate, _ = verify({'processor': 'i5-1235U'}, {'processor': 'i3-1215U', 'keyboard': 'Backlit'})
         self.assertEqual(candidate['known_specs']['processor'], 'i5-1235U')
