@@ -195,8 +195,8 @@ def is_product_page_url(url):
                         '/b', '/b/', '/c/', 'clp', 'collection']
     product_patterns = ['/dp/', '/p/itm', '/product/']
 
-    # search/collection pages and blogs that the generic patterns below miss
-    non_product_patterns = ['flipkart.com/q/', 'croma.com/unboxed/']
+    # search/collection/deal pages, store fronts and blogs that the generic patterns below miss
+    non_product_patterns = ['flipkart.com/q/', 'croma.com/unboxed/', '/sale/', '/deals', 'amazon.in/stores/']
 
     url_lower = url.lower()
 

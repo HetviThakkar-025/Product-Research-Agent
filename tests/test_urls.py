@@ -30,6 +30,20 @@ class ProductPageUrlTest(unittest.TestCase):
                     "https://www.flipkart.com/hp-15s/p/itm7efcb2faf35a3"):
             self.assertTrue(tools.is_product_page_url(url), url)
 
+    def test_sale_deals_and_store_pages_are_not_product_pages(self):
+        # live app check 1 (fridge) and live run 4 sources
+        for url in ("https://www.vijaysales.com/sale/deals-on-refrigerator",
+                    "https://www.amazon.in/stores/page/preview/ref=s9_acss_bw_cg_SFH_3c1_w",
+                    "https://www.amazon.in/stores/page/preview",
+                    "https://www.amazon.in/deals?ref_=nav_cs_gb",
+                    "https://www.croma.com/deals/laptops"):
+            self.assertFalse(tools.is_product_page_url(url), url)
+
+    def test_product_pages_with_sale_like_words_in_slug_still_accepted(self):
+        for url in ("https://www.vijaysales.com/p/238085/lenovo-ideapad-3-laptop-deals-edition",
+                    "https://www.amazon.in/HP-Wholesale-Laptop/dp/B0DCG26YC5"):
+            self.assertTrue(tools.is_product_page_url(url), url)
+
     def test_listing_pages_still_rejected(self):
         self.assertFalse(tools.is_product_page_url("https://www.amazon.in/i5-12th-gen-laptops/s"))
 
