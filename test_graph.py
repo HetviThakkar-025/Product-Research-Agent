@@ -19,24 +19,53 @@ SAMPLE_QUERY = "I want to buy a referigerator, budget 60000, family use"
 RUNS_DIR = Path(__file__).resolve().parent / "runs"
 
 
+# structured-output tool name -> call letter; plain-text calls are named after their node
+CALL_TYPES = {"Call-A": "A", "Call-B": "B", "Candidate-Extraction": "C", "Spec-Merge": "D",
+              "Price-Extraction": "E", "Fit-Evaluation": "F"}
+TEXT_CALL_TYPES = {"search": "query", "report": "report"}
+CALL_TYPE_ORDER = ["A", "B", "query", "C", "D", "E", "F", "report"]
+
+
+def call_type(invocation_params, metadata):
+    tools = (invocation_params or {}).get("tools") or []
+    if tools:
+        name = tools[0].get("function", {}).get("name")
+        return CALL_TYPES.get(name, name)
+    node = (metadata or {}).get("langgraph_node", "?")
+    return TEXT_CALL_TYPES.get(node, node)
+
+
 class LLMCallCounter(BaseCallbackHandler):
-    """Counts every chat-model request (including retries), failures and tokens, per graph node."""
+    """Counts every chat-model request (including retries), failures and tokens, per call type (A-F, query, report)."""
 
     def __init__(self):
         self.calls = Counter()
         self.errors = Counter()
         self.tokens = Counter()
+        self.prompt_tokens = Counter()      # per call type
+        self.completion_tokens = Counter()  # per call type
+        self._run_types = {}
 
-    def on_chat_model_start(self, serialized, messages, *, metadata=None, **kwargs):
-        self.calls[(metadata or {}).get("langgraph_node", "?")] += 1
+    def on_chat_model_start(self, serialized, messages, *, run_id=None, metadata=None, invocation_params=None, **kwargs):
+        kind = call_type(invocation_params, metadata)
+        self._run_types[run_id] = kind
+        self.calls[kind] += 1
 
-    def on_llm_end(self, response, **kwargs):
+    def on_llm_end(self, response, *, run_id=None, **kwargs):
+        kind = self._run_types.pop(run_id, "?")
         usage = (response.llm_output or {}).get("token_usage") or {}
         self.tokens["prompt"] += usage.get("prompt_tokens", 0)
         self.tokens["completion"] += usage.get("completion_tokens", 0)
+        self.prompt_tokens[kind] += usage.get("prompt_tokens", 0)
+        self.completion_tokens[kind] += usage.get("completion_tokens", 0)
 
-    def on_llm_error(self, error, *, metadata=None, **kwargs):
-        self.errors[f"{(metadata or {}).get('langgraph_node', '?')}: {type(error).__name__}"] += 1
+    def on_llm_error(self, error, *, run_id=None, **kwargs):
+        self.errors[f"{self._run_types.pop(run_id, '?')}: {type(error).__name__}"] += 1
+
+    def per_type_lines(self):
+        kinds = [k for k in CALL_TYPE_ORDER if self.calls[k]] + sorted(set(self.calls) - set(CALL_TYPE_ORDER))
+        return [f"  {k:7} requests={self.calls[k]:3}  prompt={self.prompt_tokens[k]:6}  completion={self.completion_tokens[k]:6}"
+                for k in kinds]
 
 
 def summarize(node, update):
@@ -70,6 +99,8 @@ def build_summary(counter, search_totals, all_candidates):
         f"LLM errors:   {sum(counter.errors.values())} {dict(counter.errors)}",
         f"LLM tokens:   {counter.tokens['prompt'] + counter.tokens['completion']} "
         f"(prompt {counter.tokens['prompt']}, completion {counter.tokens['completion']})",
+        "LLM tokens per call type (requests include retries; errored requests report no tokens):",
+        *counter.per_type_lines(),
         f"Search product-page hit rate: {search_totals['product_pages']}/{search_totals['results']}",
     ]
     priced = [c for c in all_candidates if c.get("price") is not None]

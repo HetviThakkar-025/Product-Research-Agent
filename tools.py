@@ -254,6 +254,27 @@ def trim_results(results, max_content_length=200):
     return {'results': trimmed}
 
 
+def _squash(text):
+    return re.sub(r'\s+', ' ', text).strip().lower()
+
+
+def drop_repeated_title(results):
+    """Removes the title from the start of each result's content (Call C sees both), keeping the rest of the content."""
+    trimmed = []
+    for r in results['results']:
+        # product part of the title, without a trailing " : Amazon.in: Electronics" / " - Buy ..." style suffix
+        name = _squash(re.split(r'\s+[:|-]\s+(?:amazon|flipkart|croma|reliance|vijay|tata|buy)', r.get('title', ''),
+                                flags=re.IGNORECASE)[0])
+        content = r.get('content', '')
+        body = _squash(content.lstrip('#*> \n'))
+        if name and body.startswith(name):
+            content = body[len(name):].lstrip(' ,.:;|-')
+        elif name and body and name.startswith(body):
+            content = ''
+        trimmed.append({**r, 'content': content})
+    return {'results': trimmed}
+
+
 def cap_results(results, max_for_llm=5):
     sorted_results = sorted(
         results['results'], key=lambda r: r.get('score', 0), reverse=True)

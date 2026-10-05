@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, find_search_snippet, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded
+from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -108,6 +108,7 @@ def search(state, config):
     result['results'] = filter_by_domain(result, RETAIL_DOMAINS)
     search_snippets = {r['url'].split('?')[0]: r.get('content') or '' for r in result['results']}
     result = trim_results(result)
+    result = drop_repeated_title(result)
     result = cap_results(result, max_for_llm=5)
 
     return {"search_attempt": attempt, "search_results": result,
@@ -156,19 +157,22 @@ def verify_specs(state, config):
             continue
         follow_up_results = get_official_specs(candidate["product_name"])
 
-        call_d_chain = prompt4 | str_model_call_d
-        newspecs = invoke_with_retry(call_d_chain, {
-            'product_name': candidate["product_name"],
-            'known_specs': candidate["known_specs"],
-            'required_specs': requirements['non_negotiable_specs'],
-            'follow_up_text': follow_up_results,
-            'spec_keys': spec_key_names(requirements)
-        })
+        if follow_up_results['results']:
+            call_d_chain = prompt4 | str_model_call_d
+            newspecs = invoke_with_retry(call_d_chain, {
+                'product_name': candidate["product_name"],
+                'known_specs': candidate["known_specs"],
+                'required_specs': requirements['non_negotiable_specs'],
+                'follow_up_text': follow_up_results,
+                'spec_keys': spec_key_names(requirements)
+            })
 
-        # non-destructive merge: never overwrite a spec we already have
-        for key, value in newspecs['new_specs'].items():
-            if key not in candidate['known_specs']:
-                candidate['known_specs'][key] = value
+            # non-destructive merge: never overwrite a spec we already have
+            for key, value in newspecs['new_specs'].items():
+                if key not in candidate['known_specs']:
+                    candidate['known_specs'][key] = value
+        else:
+            print(f"Skipped Call D for {candidate['product_name']}: spec search returned nothing")
 
         # case-insensitive, so "Processor" from Call C/D still counts for Call B's "processor"
         found_keys = {key.lower() for key in candidate['known_specs']}
@@ -385,8 +389,12 @@ def _retry_search_or_move_on(state, config):
 
 
 def route_after_search(state, config):
-    if state["search_results"]['results']:
+    results = state["search_results"]['results']
+    if any(is_product_page_url(r['url']) for r in results):
         return "extract_candidates"
+    if results:
+        # Call C would only find listing-page candidates, which the hallucination check drops anyway
+        print(f"Skipped Call C: none of the {len(results)} search results is a product page")
     return _retry_search_or_move_on(state, config)
 
 
