@@ -90,6 +90,12 @@ class SpecKeyPromptTest(unittest.TestCase):
         self.assertEqual(prompts.prompt2.template.count(sentence), 1)
         self.assertIn("which can be ignored if there are budget constraints.\n" + sentence + "\n", prompts.prompt2.template)
 
+    def test_call_b_prompt_has_minimum_threshold_sentence_once(self):
+        sentence = ("State non-negotiable specs as minimum thresholds or classes (for example 'RAM at least 8 GB', "
+                    "'Intel Core i5 or Ryzen 5 or better'), never as specific model numbers or the highest configuration.")
+        self.assertEqual(prompts.prompt2.template.count(sentence), 1)
+        self.assertIn("keep non-negotiable specs to at most 4.\n" + sentence + "\n", prompts.prompt2.template)
+
     def test_no_negotiable_specs(self):
         self.assertEqual(graph.spec_key_names({'non_negotiable_specs': {'a': '1'}, 'negotiable_specs': None}), ['a'])
 
