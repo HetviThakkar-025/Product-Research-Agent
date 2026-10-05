@@ -17,8 +17,9 @@ HEADLINE_INSTRUCTION = ('Begin the Final Recommendation section with this senten
                         'best, strongest, top or recommended option.')
 
 
-def cand(name, price, within_budget, fit):
+def cand(name, price, within_budget, fit, specs_found=True, missing=None):
     return {'product_name': name, 'price': price, 'within_budget': within_budget, 'fit_score': fit,
+            'specs_found': specs_found, 'missing_or_weak_specs': missing or [],
             'known_specs': {}, 'source_url': f'https://www.flipkart.com/{name}/p/itm1'}
 
 
@@ -71,6 +72,41 @@ class HeadlineTest(unittest.TestCase):
         self.assertEqual(tools.recommendation_headline(candidates, 60000),
                          "in-8 is the recommended choice: it has the best fit score (8/10) of the candidates with a "
                          "verified price within the ₹60,000 budget, at ₹55,000.")
+
+    def test_fit_9_with_verified_in_budget_price_is_recommended(self):
+        self.assertEqual(tools.recommendation_headline([cand('Laptop A', 54990, True, 9)], 60000),
+                         "Laptop A is the recommended choice: it has the best fit score (9/10) of the candidates with a "
+                         "verified price within the ₹60,000 budget, at ₹54,990.")
+
+    def test_fit_2_with_verified_in_budget_price_is_not_recommended(self):
+        lg = cand('LG 446 L 1 Star', 45990, True, 2,
+                  missing=['Energy rating: 1 Star (required ≥ 3 Star)', 'Voltage: not listed'])
+        self.assertEqual(tools.recommendation_headline([lg], 60000),
+                         "No candidate meets your requirements within the budget. Closest verified price: LG 446 L 1 Star "
+                         "at ₹45,990, but it fails energy rating.")
+
+    def test_mixed_qualified_beats_unqualified_with_lower_price(self):
+        candidates = [cand('cheap-fit-3', 30000, True, 3, missing=['RAM: 4GB (required 8GB)']),
+                      cand('good-fit-8', 58000, True, 8), cand('unpriced-fit-10', None, 'unknown', 10)]
+        self.assertTrue(tools.recommendation_headline(candidates, 60000).startswith("good-fit-8 is the recommended choice"))
+
+    def test_mixed_specs_not_found_blocks_recommendation(self):
+        candidates = [cand('fit-9-specs-missing', 50000, True, 9, specs_found=False),
+                      cand('fit-6', 52000, True, 6, missing=['Display: HD only (required FHD)'])]
+        self.assertEqual(tools.recommendation_headline(candidates, 60000),
+                         "No candidate meets your requirements within the budget. Closest verified price: "
+                         "fit-9-specs-missing at ₹50,000, but it fails required specs that could not all be confirmed.")
+
+    def test_mixed_unqualified_in_budget_and_qualified_over_budget(self):
+        candidates = [cand('in-fit-4', 45000, True, 4, missing=['Storage: 1TB HDD (required 512GB SSD)']),
+                      cand('over-fit-9', 64000, False, 9)]
+        self.assertEqual(tools.recommendation_headline(candidates, 60000),
+                         "No candidate meets your requirements within the budget. Closest verified price: in-fit-4 at "
+                         "₹45,000, but it fails storage.")
+
+    def test_fit_below_threshold_without_listed_gaps(self):
+        self.assertTrue(tools.recommendation_headline([cand('a', 50000, True, 6)], 60000).endswith(
+            "but it fails the fit threshold (fit score 6/10)."))
 
     def test_live_run_3_closest_over_budget_with_gap(self):
         self.assertEqual(tools.recommendation_headline(LIVE_RUN_3, 60000),

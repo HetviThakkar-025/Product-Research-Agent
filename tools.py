@@ -607,19 +607,44 @@ def format_inr(amount):
     return "₹" + ",".join(([head] if head else []) + groups + [tail])
 
 
+MIN_FIT_SCORE = 7  # same threshold as graph.is_qualified
+
+
+def meets_required_specs(candidate):
+    """All non-negotiable specs found and met well enough: specs_found and fit score >= 7 (is_qualified without price)."""
+    return bool(candidate.get('specs_found')) and (candidate.get('fit_score') or 0) >= MIN_FIT_SCORE
+
+
+def main_failing_spec(candidate):
+    """Short label of the first missing or weak required spec, e.g. 'energy rating' from 'Energy rating: 1 Star (...)'."""
+    weak = candidate.get('missing_or_weak_specs') or []
+    if weak:
+        return re.split(r':|\s\(', weak[0], maxsplit=1)[0].strip().lower()
+    if not candidate.get('specs_found'):
+        return "required specs that could not all be confirmed"
+    return f"the fit threshold (fit score {candidate.get('fit_score')}/10)"
+
+
 def recommendation_headline(candidates, budget):
     """
-    First sentence of the report's Final Recommendation, decided from verified prices only: the best-fit
-    candidate with a verified in-budget price, else the verified-price candidate closest to the budget
-    with its gap, else a statement that no price could be verified.
+    First sentence of the report's Final Recommendation, decided in Python: the best-fit candidate that meets the
+    required specs and has a verified in-budget price; else, if verified in-budget prices exist but none meets the
+    specs, that fact with the best of them and its main failing spec; else the verified-price candidate closest to
+    the budget with its gap; else a statement that no price could be verified.
     """
     priced = [c for c in candidates if c.get('price') is not None]
     in_budget = [c for c in priced if c.get('within_budget') is True]
-    if in_budget:
-        best = max(in_budget, key=lambda c: (c.get('fit_score') or 0, -c['price']))
+    recommendable = [c for c in in_budget if meets_required_specs(c)]
+    if recommendable:
+        best = max(recommendable, key=lambda c: (c.get('fit_score') or 0, -c['price']))
         within = f" within the {format_inr(budget)} budget" if budget is not None else ""
         return (f"{best['product_name']} is the recommended choice: it has the best fit score "
                 f"({best.get('fit_score')}/10) of the candidates with a verified price{within}, at {format_inr(best['price'])}.")
+    if in_budget:
+        closest = max(in_budget, key=lambda c: (c.get('fit_score') or 0, -c['price']))
+        within = " within the budget" if budget is not None else ""
+        return (f"No candidate meets your requirements{within}. Closest verified price: {closest['product_name']} "
+                f"at {format_inr(closest['price'])}, but it fails {main_failing_spec(closest)}.")
     if priced:
         closest = min(priced, key=lambda c: c['price'] - budget)
         gap = closest['price'] - budget
