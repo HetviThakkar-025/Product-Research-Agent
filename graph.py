@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded
+from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -358,6 +358,9 @@ def report(state, config):
     if is_degraded:
         realistic_budget = suggest_realistic_budget(report_candidates)
 
+    # decided in Python from verified prices, so the model can't crown an unpriced candidate
+    headline = recommendation_headline(all_candidates, requirements['budget'])
+
     candidates_summary = []
     for c in report_candidates:
         candidates_summary.append({
@@ -381,8 +384,11 @@ def report(state, config):
         'negotiable_specs': requirements['negotiable_specs'],
         'candidates': candidates_summary,
         'is_degraded': is_degraded,
-        'realistic_budget': realistic_budget
+        'realistic_budget': realistic_budget,
+        'recommendation_headline': headline
     })
+    if headline not in report_text:
+        print(f"Report check: the Final Recommendation headline was not used verbatim: {headline!r}")
 
     return {
         "report": report_text,

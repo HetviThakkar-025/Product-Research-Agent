@@ -495,16 +495,50 @@ def search_price_fallback(product_name):
 
 def select_report_candidates(all_candidates, top_n=3):
     def sort_key(c):
-        # verified in budget first, then price unknown, then over budget; best fit first within each group
+        # verified in budget first, then verified over budget, then price unknown; best fit first within each group
         if c.get('within_budget') is True:
             budget_group = 0
-        elif c.get('price') is None:
+        elif c.get('price') is not None:
             budget_group = 1
         else:
             budget_group = 2
         return (budget_group, -(c.get('fit_score') or 0))
 
     return sorted(all_candidates, key=sort_key)[:top_n]
+
+
+def format_inr(amount):
+    """₹ with Indian digit grouping: 132489 -> ₹1,32,489."""
+    digits = str(int(amount))
+    head, tail = digits[:-3], digits[-3:]
+    groups = []
+    while len(head) > 2:
+        groups.insert(0, head[-2:])
+        head = head[:-2]
+    return "₹" + ",".join(([head] if head else []) + groups + [tail])
+
+
+def recommendation_headline(candidates, budget):
+    """
+    First sentence of the report's Final Recommendation, decided from verified prices only: the best-fit
+    candidate with a verified in-budget price, else the verified-price candidate closest to the budget
+    with its gap, else a statement that no price could be verified.
+    """
+    priced = [c for c in candidates if c.get('price') is not None]
+    in_budget = [c for c in priced if c.get('within_budget') is True]
+    if in_budget:
+        best = max(in_budget, key=lambda c: (c.get('fit_score') or 0, -c['price']))
+        within = f" within the {format_inr(budget)} budget" if budget is not None else ""
+        return (f"{best['product_name']} is the recommended choice: it has the best fit score "
+                f"({best.get('fit_score')}/10) of the candidates with a verified price{within}, at {format_inr(best['price'])}.")
+    if priced:
+        closest = min(priced, key=lambda c: c['price'] - budget)
+        gap = closest['price'] - budget
+        return (f"No candidate has a verified price within the {format_inr(budget)} budget; the closest is "
+                f"{closest['product_name']} at {format_inr(closest['price'])}, {format_inr(gap)} "
+                f"({gap / budget:.1%}) over budget.")
+    within = f" within the {format_inr(budget)} budget" if budget is not None else ""
+    return f"No candidate has a verified price, so none can be recommended as a purchase{within}."
 
 
 def suggest_realistic_budget(candidates):
