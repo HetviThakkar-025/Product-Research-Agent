@@ -13,7 +13,7 @@ APP = str(ROOT / "app.py")
 
 
 def fake_stream(*events, error=None):
-    def run_pipeline_stream(user_query, previous_question=None):
+    def run_pipeline_stream(user_query, previous_question=None, **kwargs):
         yield from events
         if error:
             raise error

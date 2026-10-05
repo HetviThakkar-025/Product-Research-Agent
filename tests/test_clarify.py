@@ -22,7 +22,7 @@ class AppClarifyTest(unittest.TestCase):
         calls = []
         replies = iter(replies)
 
-        def stream(user_query, previous_question=None):
+        def stream(user_query, previous_question=None, **kwargs):
             calls.append((user_query, previous_question))
             yield next(replies)
         with mock.patch.object(agent, "run_pipeline_stream", stream):
