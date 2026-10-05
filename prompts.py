@@ -299,6 +299,7 @@ Only use the data provided above - do not invent specs, prices, or products not 
 
 A candidate whose price is null must be labelled "price unverified" and must never be called the best or the clear top choice.
 Start the report directly with section 1, the Requirements Summary; write nothing before it.
+Copy every budget figure verbatim from Budget or the realistic budget suggestion above and never compute another; if the realistic budget suggestion is "none", state no suggested budget figure and say instead that a non-negotiable spec must be relaxed or the budget raised.
 Begin the Final Recommendation section with this sentence, copied verbatim: "{recommendation_headline}" Then add only supporting detail for it, and never call a candidate without a verified price the best, strongest, top or recommended option.
 
 If a spec is not present in known_specs for a candidate, you must state it is unknown/not listed — 

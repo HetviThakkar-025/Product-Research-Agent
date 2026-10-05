@@ -656,8 +656,19 @@ def recommendation_headline(candidates, budget):
 
 
 def suggest_realistic_budget(candidates):
-    prices = [c['price'] for c in candidates if c.get('price') is not None]
+    """Lowest verified price among candidates that meet all required specs (specs_found, fit >= 7); None if none do."""
+    prices = [c['price'] for c in candidates if c.get('price') is not None and meets_required_specs(c)]
     return min(prices) if prices else None
+
+
+def realistic_budget_text(realistic_budget, budget):
+    """The realistic budget exactly as the report must quote it, or "none (...)" so no figure gets invented."""
+    if realistic_budget is None:
+        return "none (no candidate that meets every required spec has a verified price)"
+    if budget is not None and realistic_budget > budget:
+        return (f"{format_inr(realistic_budget)} ({format_inr(realistic_budget - budget)} above the "
+                f"{format_inr(budget)} budget)")
+    return format_inr(realistic_budget)
 
 
 search_tool = TavilySearch(max_results=7, include_domains=RETAIL_DOMAINS)

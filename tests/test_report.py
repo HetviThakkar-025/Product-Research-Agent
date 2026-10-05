@@ -12,6 +12,9 @@ import tools
 INSTRUCTION = ('A candidate whose price is null must be labelled "price unverified" and must never be called the best '
                'or the clear top choice.')
 START_INSTRUCTION = "Start the report directly with section 1, the Requirements Summary; write nothing before it."
+BUDGET_INSTRUCTION = ('Copy every budget figure verbatim from Budget or the realistic budget suggestion above and never '
+                      'compute another; if the realistic budget suggestion is "none", state no suggested budget figure and '
+                      'say instead that a non-negotiable spec must be relaxed or the budget raised.')
 HEADLINE_INSTRUCTION = ('Begin the Final Recommendation section with this sentence, copied verbatim: "{recommendation_headline}" '
                         'Then add only supporting detail for it, and never call a candidate without a verified price the '
                         'best, strongest, top or recommended option.')
@@ -148,7 +151,8 @@ class ReportPromptTest(unittest.TestCase):
 
     def test_headline_instruction_added_once(self):
         self.assertEqual(prompts.prompt7.template.count(HEADLINE_INSTRUCTION), 1)
-        self.assertIn(INSTRUCTION + "\n" + START_INSTRUCTION + "\n" + HEADLINE_INSTRUCTION + "\n", prompts.prompt7.template)
+        self.assertIn(INSTRUCTION + "\n" + START_INSTRUCTION + "\n" + BUDGET_INSTRUCTION + "\n" + HEADLINE_INSTRUCTION + "\n",
+                      prompts.prompt7.template)
 
     def test_no_warning_before_requirements_summary_instruction(self):
         self.assertNotIn("say so first", prompts.prompt7.template)
@@ -195,6 +199,51 @@ class ReportPromptTest(unittest.TestCase):
         self.assertIn("Report check: section 5 does not start with the headline sentence verbatim", log)
         self.assertTrue(update["report"].startswith("## 1. Requirements Summary"))
         self.assertEqual(update["report"].count(headline), 0)
+
+
+class BudgetGapTest(unittest.TestCase):
+    def test_realistic_budget_only_from_candidates_meeting_all_specs(self):
+        candidates = [cand('cheap-fit-2', 41000, True, 2), cand('spec-ok-over', 73990, False, 8),
+                      cand('spec-ok-dearer', 81000, False, 9), cand('specs-missing', 50000, True, 9, specs_found=False),
+                      cand('unpriced-fit-10', None, 'unknown', 10)]
+        self.assertEqual(tools.suggest_realistic_budget(candidates), 73990)
+
+    def test_no_spec_meeting_priced_candidate_gives_no_figure(self):
+        # live check 1: the only priced fridge had fit 2; before, its price became the "realistic budget"
+        self.assertIsNone(tools.suggest_realistic_budget([cand('LG 1 Star', 45990, True, 2), cand('x', None, 'unknown', 9)]))
+        self.assertEqual(tools.realistic_budget_text(None, 60000),
+                         "none (no candidate that meets every required spec has a verified price)")
+
+    def test_realistic_budget_text_states_gap(self):
+        self.assertEqual(tools.realistic_budget_text(73990, 60000), "₹73,990 (₹13,990 above the ₹60,000 budget)")
+        self.assertEqual(tools.realistic_budget_text(55000, 60000), "₹55,000")
+        self.assertEqual(tools.realistic_budget_text(55000, None), "₹55,000")
+
+    def run_report(self, candidates, budget=60000):
+        fake = FakeGroq({"text": lambda p: "## 1. Requirements Summary\n## 5. Final Recommendation\nx"}).install()
+        state = {"requirements": {'category': 'fridge', 'usecase': 'family', 'budget': budget,
+                                  'non_negotiable_specs': {'capacity': '250 L'}, 'negotiable_specs': None},
+                 "all_candidates": candidates}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                graph.report(state, {})
+        finally:
+            fake.uninstall()
+        return fake.calls[0][1]
+
+    def test_report_prompt_gets_python_figures_verbatim(self):
+        prompt = self.run_report([cand('spec-ok-over', 73990, False, 8), cand('cheap-fit-2', 41000, True, 2)])
+        self.assertIn("Budget: ₹60,000", prompt)
+        self.assertIn("(if degraded): ₹73,990 (₹13,990 above the ₹60,000 budget)", prompt)
+        self.assertIn(BUDGET_INSTRUCTION, prompt)
+
+    def test_report_prompt_gets_none_when_no_candidate_meets_specs(self):
+        prompt = self.run_report([cand('LG 1 Star', 45990, True, 2)])
+        self.assertIn("(if degraded): none (no candidate that meets every required spec has a verified price)", prompt)
+        self.assertNotIn("45990", prompt.split("Realistic budget suggestion")[1].split("\n")[0])
+
+    def test_no_budget_limit(self):
+        self.assertIn("Budget: no budget limit", self.run_report([cand('a', 50000, True, 8)], budget=None))
 
 
 class ReportIssuesTest(unittest.TestCase):

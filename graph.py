@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, budget_note, report_issues, trim_to_section_1, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded, emit_event, emit_progress
+from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, budget_note, realistic_budget_text, format_inr, report_issues, trim_to_section_1, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded, emit_event, emit_progress
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -372,9 +372,8 @@ def report(state, config):
     report_candidates = select_report_candidates(all_candidates, top_n=4)
     is_degraded = len(final_qualified) < MIN_QUALIFIED
 
-    realistic_budget = None
-    if is_degraded:
-        realistic_budget = suggest_realistic_budget(report_candidates)
+    # only from candidates meeting every required spec; None means the report must not state a budget figure
+    realistic_budget = suggest_realistic_budget(all_candidates) if is_degraded else None
 
     # decided in Python from verified prices, so the model can't crown an unpriced candidate
     headline = recommendation_headline(all_candidates, requirements['budget'])
@@ -399,12 +398,12 @@ def report(state, config):
     report_text = invoke_with_retry(report_chain, {
         'category': requirements['category'],
         'usecase': requirements['usecase'],
-        'budget': requirements['budget'],
+        'budget': format_inr(requirements['budget']) if requirements['budget'] is not None else "no budget limit",
         'non_negotiable_specs': requirements['non_negotiable_specs'],
         'negotiable_specs': requirements['negotiable_specs'],
         'candidates': candidates_summary,
         'is_degraded': is_degraded,
-        'realistic_budget': realistic_budget,
+        'realistic_budget': realistic_budget_text(realistic_budget, requirements['budget']) if is_degraded else "not needed",
         'recommendation_headline': headline
     })
     for issue in report_issues(report_text, headline):
