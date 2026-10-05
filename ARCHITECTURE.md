@@ -44,12 +44,21 @@ The two diamonds are routing functions, not nodes: `_retry_search_or_move_on` an
 
 `app.py` writes progress inside `st.status` and streams the tokens with `st.write_stream`.
 
+## Persistence
+
+`storage.py` opens one SQLite file (`data/agent.db`, overridable with `AGENT_DB_PATH`) on a single connection shared by every Streamlit session (`check_same_thread=False`, created once via `st.cache_resource`). It holds:
+- **checkpoints:** LangGraph's `SqliteSaver`. The app's graph is built with it, and every search runs in its own `thread_id` (a clarify answer reuses the thread that asked), so each search's final state is saved: query, report, headline and candidates.
+- **a `sessions` table:** thread_id, title (first message, ~60 chars), created_at, and status (running, clarifying, done or error). `track_session` writes it around each run.
+
+The **sidebar** lists sessions newest first. Opening one reads the thread's last checkpoint (`load_saved_state`) read-only, with no pipeline run; delete removes the row and the thread's checkpoints. `run_pipeline()` and `test_graph.py` use no checkpointer.
+
 ## Files
 
-- `app.py`: Streamlit chat UI; calls `agent.run_pipeline()`.
+- `app.py`: Streamlit chat UI; calls `agent.run_pipeline_stream()` on the checkpointed graph and draws the past-searches sidebar.
 - `agent.py`: `run_pipeline()` (invokes the compiled graph) and `run_pipeline_stream()` (streams it), both shaping the result for the UI.
 - `graph.py`: state schema, nodes, routing functions and `build_graph()`.
 - `tools.py`: Tavily search/extract wrappers, URL and listing filters, model-number parsing, price attribution, retries (`invoke_with_retry`), report ranking and headline.
+- `storage.py`: SQLite connection, `SqliteSaver` checkpointer, `sessions` table (`SessionStore`, `track_session`) and `load_saved_state`.
 - `prompts.py`: Groq models, structured-output schemas, prompts for Calls A–F and the report, and the intake chain.
 - `test_graph.py`: runs one live query, printing each node; saves report, summary and token counts per call type to `runs/`.
 - `tests/`: mocked unit tests (`python -m unittest discover -s tests`); no Groq or Tavily calls.
@@ -59,4 +68,4 @@ The two diamonds are routing functions, not nodes: `_retry_search_or_move_on` an
 - **Price coverage**: many candidates end up "price unverified". Retail pages often render prices client-side or list other products' prices next to them, and the agent only accepts a price it can tie to the exact product.
 - **RunnableBranch error fallback**: in `prompts.py`, an unexpected Call A status (or a missing question) returns an `{"error": ...}` dict or `None` instead of raising. `intake` stores that as the requirements, and the run fails later with a KeyError or TypeError.
 - **Shared `search_tool.max_results`**: the search node changes the module-level `search_tool` in place, so concurrent runs would interfere.
-- **No checkpointer yet**: `build_graph()` accepts one but none is used, so a run's state can't be resumed or inspected after it ends.
+- **History is local only**: the SQLite file is on local disk, so on Streamlit Community Cloud it resets when the app restarts or is redeployed. Reopened searches are read-only (no follow-ups yet).

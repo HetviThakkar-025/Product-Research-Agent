@@ -22,6 +22,8 @@ You type something like _"I want a laptop for coding, budget around 50000 INR"_ 
 
 In the app you see each step's progress live while it works (including any wait for the AI service's rate limit), and the report streams in as it is written, after its one-line recommendation.
 
+Every search is saved: the sidebar lists your past searches, newest first, and clicking one reopens its report read-only, without running the search again (each has a delete button). History lives in a local SQLite file (`data/agent.db`), so on Streamlit Community Cloud it resets whenever the app restarts or is redeployed.
+
 **Tip:** specific requests work best — for example _"double door frost free refrigerator 250 litre 3 star under 50000"_ — because vague queries often return only category pages instead of individual products.
 
 ---
@@ -95,6 +97,8 @@ agent.py      # run_pipeline() entry point used by app.py (runs the graph)
 graph.py      # LangGraph state graph: the nodes and routing of the 9-step flow
 tools.py      # Search, filtering, and verification utilities
 prompts.py    # LLM prompts and structured output schemas
+storage.py    # SQLite persistence: LangGraph checkpoints + the past-searches table
+data/agent.db # Saved searches (created on first run, gitignored)
 test_graph.py # Runs one live query, printing each node; saves report + summary to runs/
 tests/        # Mocked unit tests (no API calls)
 ```
@@ -107,6 +111,7 @@ tests/        # Mocked unit tests (no API calls)
 - Runs on free-tier API limits, so it may occasionally hit daily usage caps under heavy traffic — you'll see a clear message if that happens, not a crash.
 - Search quality varies by product category — tested most heavily on laptops, with good results on appliances too, but some categories may need a few tries to find good matches.
 - Not connected to live pricing APIs, so prices are as current as the last time Tavily indexed that page — always worth double-checking on the actual retailer site before buying.
+- Search history is kept only in a local SQLite file — no external database — so on Streamlit Community Cloud past searches are lost when the app restarts or is redeployed. Reopened searches are read-only; follow-up questions on them aren't supported yet.
 
 ## Known issues
 
