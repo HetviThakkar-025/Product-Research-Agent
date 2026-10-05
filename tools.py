@@ -630,6 +630,32 @@ def spec_status(candidate):
     return "meets all required specs" if meets_required_specs(candidate) else f"fails: {main_failing_spec(candidate)}"
 
 
+MIN_CANDIDATES_FOR_BUDGET_ADVICE = 2
+
+
+def gap_advice(candidates, budget):
+    """
+    What the report's Budget Gap section may suggest, decided from the data: (kind, advice). Raising the budget is
+    suggested only when verified prices exist and every one of them is over budget; with fewer than 2 candidates
+    found at all the gap is in the search, not the budget.
+    """
+    priced = [c for c in candidates if c.get('price') is not None]
+    if len(candidates) < MIN_CANDIDATES_FOR_BUDGET_ADVICE:
+        found = "Only 1 matching product was found" if len(candidates) == 1 else "No matching products were found"
+        return "search", (f"{found}, so this is a search problem, not a budget problem. "
+                          "Suggest a more specific query (for example capacity, type or brand) or relaxing one "
+                          "non-negotiable spec. Do not suggest raising the budget.")
+    if not priced:
+        return "unverified", ("No candidate's price could be verified, so the budget cannot be judged. Suggest checking "
+                              "the linked product pages for current prices or a more specific query. Do not suggest "
+                              "raising the budget.")
+    if budget is not None and all(c.get('within_budget') is False for c in priced):
+        return "budget", ("Every candidate with a verified price is over the budget. Suggest raising the budget to the "
+                          "realistic budget suggestion (only if it is not \"none\") or relaxing one non-negotiable spec.")
+    return "specs", ("Some candidates have verified prices within the budget but do not meet every required spec. "
+                     "Suggest relaxing the spec they fail or a more specific query. Do not suggest raising the budget.")
+
+
 def recommendation_headline(candidates, budget):
     """
     First sentence of the report's Final Recommendation, decided in Python: the best-fit candidate that meets the

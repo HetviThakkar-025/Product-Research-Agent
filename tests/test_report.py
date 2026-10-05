@@ -13,8 +13,9 @@ INSTRUCTION = ('A candidate whose price is null must be labelled "price unverifi
                'or the clear top choice.')
 START_INSTRUCTION = "Start the report directly with section 1, the Requirements Summary; write nothing before it."
 BUDGET_INSTRUCTION = ('Copy every budget figure verbatim from Budget or the realistic budget suggestion above and never '
-                      'compute another; if the realistic budget suggestion is "none", state no suggested budget figure and '
-                      'say instead that a non-negotiable spec must be relaxed or the budget raised.')
+                      'compute another; if the realistic budget suggestion is "none", state no suggested budget figure.')
+FACTS_INSTRUCTION = ('State only facts found in the candidate data or in the values given above; never describe typical '
+                     'market prices, what models usually cost or "start at", or any product, price or spec that is not listed.')
 HEADLINE_INSTRUCTION = ('Begin the Final Recommendation section with this sentence, copied verbatim: "{recommendation_headline}" '
                         'Then add only supporting detail for it, and never call a candidate without a verified price the '
                         'best, strongest, top or recommended option.')
@@ -151,8 +152,8 @@ class ReportPromptTest(unittest.TestCase):
 
     def test_headline_instruction_added_once(self):
         self.assertEqual(prompts.prompt7.template.count(HEADLINE_INSTRUCTION), 1)
-        self.assertIn(INSTRUCTION + "\n" + START_INSTRUCTION + "\n" + BUDGET_INSTRUCTION + "\n" + HEADLINE_INSTRUCTION + "\n",
-                      prompts.prompt7.template)
+        self.assertIn(INSTRUCTION + "\n" + FACTS_INSTRUCTION + "\n" + START_INSTRUCTION + "\n" + BUDGET_INSTRUCTION + "\n"
+                      + HEADLINE_INSTRUCTION + "\n", prompts.prompt7.template)
 
     def test_no_warning_before_requirements_summary_instruction(self):
         self.assertNotIn("say so first", prompts.prompt7.template)
@@ -233,6 +234,7 @@ class BudgetGapTest(unittest.TestCase):
 
     def test_report_prompt_gets_python_figures_verbatim(self):
         prompt = self.run_report([cand('spec-ok-over', 73990, False, 8), cand('cheap-fit-2', 41000, True, 2)])
+        self.assertIn("Gap advice, decided from the data (if degraded): Some candidates have verified prices within", prompt)
         self.assertIn("Budget: ₹60,000", prompt)
         self.assertIn("(if degraded): ₹73,990 (₹13,990 above the ₹60,000 budget)", prompt)
         self.assertIn(BUDGET_INSTRUCTION, prompt)
@@ -244,6 +246,63 @@ class BudgetGapTest(unittest.TestCase):
 
     def test_no_budget_limit(self):
         self.assertIn("Budget: no budget limit", self.run_report([cand('a', 50000, True, 8)], budget=None))
+
+
+class GapAdviceTest(unittest.TestCase):
+    def kind(self, candidates, budget=60000):
+        return tools.gap_advice(candidates, budget)
+
+    def test_one_candidate_is_a_search_problem(self):
+        # live app check 1: a single fridge found; the report suggested raising the budget
+        kind, advice = self.kind([cand('LG 446 L 1 Star', 45990, True, 2)])
+        self.assertEqual(kind, "search")
+        self.assertTrue(advice.startswith("Only 1 matching product was found, so this is a search problem"))
+        self.assertIn("more specific query (for example capacity, type or brand)", advice)
+        self.assertIn("Do not suggest raising the budget.", advice)
+
+    def test_no_candidates_is_a_search_problem(self):
+        kind, advice = self.kind([])
+        self.assertEqual(kind, "search")
+        self.assertTrue(advice.startswith("No matching products were found, so this is a search problem"))
+
+    def test_all_verified_prices_over_budget_is_a_budget_problem(self):
+        kind, advice = self.kind(LIVE_RUN_3)  # three verified prices, all over; three unpriced
+        self.assertEqual(kind, "budget")
+        self.assertIn("Suggest raising the budget to the realistic budget suggestion", advice)
+
+    def test_no_verified_prices(self):
+        kind, advice = self.kind([cand('a', None, 'unknown', 9), cand('b', None, 'unknown', 7)])
+        self.assertEqual(kind, "unverified")
+        self.assertIn("Do not suggest raising the budget.", advice)
+
+    def test_in_budget_prices_that_fail_specs_is_a_spec_problem(self):
+        kind, advice = self.kind([cand('a', 45000, True, 3), cand('b', 70000, False, 9)])
+        self.assertEqual(kind, "specs")
+        self.assertIn("Do not suggest raising the budget.", advice)
+
+    def test_no_budget_never_suggests_raising_it(self):
+        self.assertEqual(self.kind([cand('a', 45000, True, 3), cand('b', 70000, True, 5)], budget=None)[0], "specs")
+
+    def test_only_budget_kind_mentions_raising_without_prohibition(self):
+        for candidates in ([cand('a', 1, True, 2)], [], [cand('a', None, 'unknown', 9)] * 2,
+                           [cand('a', 45000, True, 3), cand('b', 70000, False, 9)]):
+            self.assertIn("Do not suggest raising the budget.", self.kind(candidates)[1])
+
+    def test_report_prompt_gets_search_advice_for_single_candidate(self):
+        fake = FakeGroq({"text": lambda p: "## 1. Requirements Summary\n## 5. Final Recommendation\nx"}).install()
+        state = {"requirements": {'category': 'refrigerator', 'usecase': 'family', 'budget': 60000,
+                                  'non_negotiable_specs': {'capacity': 'at least 250 L'}, 'negotiable_specs': None},
+                 "all_candidates": [cand('LG 446 L 1 Star', None, 'unknown', 2)]}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                graph.report(state, {})
+        finally:
+            fake.uninstall()
+        prompt = fake.calls[0][1]
+        self.assertIn("Gap advice, decided from the data (if degraded): Only 1 matching product was found", prompt)
+        self.assertIn("then follow the gap advice above exactly and suggest nothing it does not.", prompt)
+        self.assertIn(FACTS_INSTRUCTION, prompt)
+        self.assertIn("Budget gap: search", out.getvalue())
 
 
 class SpecStatusTest(unittest.TestCase):

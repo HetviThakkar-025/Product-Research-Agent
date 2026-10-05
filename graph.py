@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import call_a_chain, branch_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, budget_note, realistic_budget_text, format_inr, spec_status, report_issues, trim_to_section_1, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded, emit_event, emit_progress
+from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, budget_note, realistic_budget_text, format_inr, spec_status, gap_advice, report_issues, trim_to_section_1, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded, emit_event, emit_progress
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -393,6 +393,10 @@ def report(state, config):
 
     # decided in Python from verified prices, so the model can't crown an unpriced candidate
     headline = recommendation_headline(all_candidates, requirements['budget'])
+    # budget problem vs search problem, also decided in Python
+    gap_kind, advice = gap_advice(all_candidates, requirements['budget'])
+    if is_degraded:
+        print(f"Budget gap: {gap_kind}")
     emit_event({"type": "headline", "text": headline})  # shown before the report text streams
 
     candidates_summary = []
@@ -421,6 +425,7 @@ def report(state, config):
         'candidates': candidates_summary,
         'is_degraded': is_degraded,
         'realistic_budget': realistic_budget_text(realistic_budget, requirements['budget']) if is_degraded else "not needed",
+        'gap_advice': advice if is_degraded else "not needed",
         'recommendation_headline': headline
     })
     for issue in report_issues(report_text, headline):

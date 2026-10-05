@@ -285,6 +285,7 @@ Candidates found (already sorted, best fit first):
 
 Is this a degraded result (fewer than 2 candidates fully met all requirements within budget)? {is_degraded}
 Realistic budget suggestion based on actual prices found (if degraded): {realistic_budget}
+Gap advice, decided from the data (if degraded): {gap_advice}
 
 Write the report with these sections, in Markdown:
 1. **Requirements Summary** - brief restatement of what was searched for.
@@ -292,21 +293,22 @@ Write the report with these sections, in Markdown:
 3. **Comparison Table** - a Markdown table with columns: Product, Price, Fit Score, Key Specs, Required Specs, Within Budget. Fill Required Specs with each candidate's spec_status verbatim, so being within budget is never read as an endorsement.
 4. **Fit Analysis** - for each candidate, note missing or weak specs from the data given.
 5. **Final Recommendation** - pick the single best option and explain why, in plain language.
-6. If is_degraded is true: add a **Budget Gap** section - explain honestly that no candidate fully met all requirements within budget, state the gap using the realistic_budget figure, and suggest the user either raise their budget close to that figure or relax a specific non-negotiable spec.
+6. If is_degraded is true: add a **Budget Gap** section - explain honestly that no candidate fully met all requirements within budget, then follow the gap advice above exactly and suggest nothing it does not.
 7. Highlight each product's source URL as a Markdown link. If a candidate has a price_source_url, also link it next to that candidate's price as where the price was found.
 
 Only use the data provided above - do not invent specs, prices, or products not listed in the candidates
 
 A candidate whose price is null must be labelled "price unverified" and must never be called the best or the clear top choice.
+State only facts found in the candidate data or in the values given above; never describe typical market prices, what models usually cost or "start at", or any product, price or spec that is not listed.
 Start the report directly with section 1, the Requirements Summary; write nothing before it.
-Copy every budget figure verbatim from Budget or the realistic budget suggestion above and never compute another; if the realistic budget suggestion is "none", state no suggested budget figure and say instead that a non-negotiable spec must be relaxed or the budget raised.
+Copy every budget figure verbatim from Budget or the realistic budget suggestion above and never compute another; if the realistic budget suggestion is "none", state no suggested budget figure.
 Begin the Final Recommendation section with this sentence, copied verbatim: "{recommendation_headline}" Then add only supporting detail for it, and never call a candidate without a verified price the best, strongest, top or recommended option.
 
 If a spec is not present in known_specs for a candidate, you must state it is unknown/not listed — 
 never suggest, estimate, or imply what the value probably is, even based on the brand or product line's typical specs""",
     input_variables=['category', 'usecase', 'budget', 'non_negotiable_specs',
                      'negotiable_specs', 'candidates', 'is_degraded', 'realistic_budget',
-                     'recommendation_headline']
+                     'recommendation_headline', 'gap_advice']
 )
 
 report_chain = prompt7 | llm_report | parser
