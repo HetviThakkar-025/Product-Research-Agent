@@ -3,6 +3,7 @@ The past-searches sidebar (Streamlit AppTest on a temporary SQLite file): list, 
 calls, clarifying/error sessions, delete, New search, and a search from the app saving its thread.
 """
 import contextlib
+import gc
 import io
 import os
 import tempfile
@@ -13,6 +14,7 @@ from unittest import mock
 
 from support import ROOT, FakeGroq, FakeTavily
 
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 import agent
@@ -30,7 +32,8 @@ def no_pipeline(*args, **kwargs):
 
 class SidebarTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        # Windows can't delete a file another connection still holds; cleanup errors are not test failures
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.db = str(Path(self.tmp.name) / "agent.db")
         self.env = mock.patch.dict(os.environ, {"AGENT_DB_PATH": self.db})
         self.env.start()
@@ -42,6 +45,8 @@ class SidebarTest(unittest.TestCase):
     def tearDown(self):
         self.env.stop()
         self.conn.close()
+        st.cache_resource.clear()  # drops the app's cached connection to this test's file
+        gc.collect()               # ...and closes it, so Windows can delete the file
         self.tmp.cleanup()
 
     def save_search(self, query=QUERY, created_at=None):
