@@ -96,6 +96,21 @@ class SpecKeyPromptTest(unittest.TestCase):
         self.assertEqual(prompts.prompt2.template.count(sentence), 1)
         self.assertIn("keep non-negotiable specs to at most 4.\n" + sentence + "\n", prompts.prompt2.template)
 
+    def test_call_b_prompt_has_user_stated_specs_sentence_once(self):
+        sentence = ("Do not make a spec non-negotiable unless the user's request states it or the use case clearly "
+                    "requires it; for a general request, use broad thresholds and put everything else under negotiable.")
+        self.assertEqual(prompts.prompt2.template.count(sentence), 1)
+        self.assertIn("or the highest configuration.\n" + sentence + "\n", prompts.prompt2.template)
+
+    def test_call_b_runs_at_temperature_0_and_others_unchanged(self):
+        # langchain-groq sends temperature=0 as 1e-8 (Groq's own handling of 0); it is in every Call B request body
+        call_b_model = prompts.str_model_call_b.first.bound
+        self.assertEqual(call_b_model._default_params["temperature"], 1e-8)
+        self.assertEqual((call_b_model.max_tokens, call_b_model.max_retries), (1200, 0))
+        for name in ("str_model_call_a", "str_model_call_c", "str_model_call_d", "str_model_call_e", "str_model_call_f"):
+            self.assertEqual(getattr(prompts, name).first.bound._default_params["temperature"], 0.7, name)
+        self.assertEqual(prompts.llm_report._default_params["temperature"], 0.7)
+
     def test_no_negotiable_specs(self):
         self.assertEqual(graph.spec_key_names({'non_negotiable_specs': {'a': '1'}, 'negotiable_specs': None}), ['a'])
 

@@ -13,8 +13,10 @@ REASONING_EFFORT = "low"
 
 # Call A (status/question), Call E (price/availability)
 llm_small = ChatGroq(model=MODEL, max_tokens=500, reasoning_effort=REASONING_EFFORT, max_retries=0)
-# Call B, Call D
+# Call D, Call F
 llm_medium = ChatGroq(model=MODEL, max_tokens=1200, reasoning_effort=REASONING_EFFORT, max_retries=0)
+# Call B (requirements), at temperature 0 so the extracted specs drift less from run to run
+llm_requirements = ChatGroq(model=MODEL, max_tokens=1200, temperature=0, reasoning_effort=REASONING_EFFORT, max_retries=0)
 # Call C (up to 4 full candidates)
 llm_large = ChatGroq(model=MODEL, max_tokens=3000, reasoning_effort=REASONING_EFFORT, max_retries=0)
 # report
@@ -169,7 +171,7 @@ call_f = {
 }
 
 str_model_call_a = llm_small.with_structured_output(call_a)
-str_model_call_b = llm_medium.with_structured_output(call_b)
+str_model_call_b = llm_requirements.with_structured_output(call_b)
 str_model_call_c = llm_large.with_structured_output(call_c)
 str_model_call_d = llm_medium.with_structured_output(call_d)
 str_model_call_e = llm_small.with_structured_output(call_e)
@@ -197,6 +199,7 @@ non-negotiable specs based on specs which are highly important and can't be negl
 negotiable based on specs that are less important, which can be ignored if there are budget constraints.
 Only mark a spec non-negotiable if product listings state it as a concrete, checkable value (e.g. processor, RAM, storage, display size/resolution); put subjective or rarely listed qualities (keyboard feel, build quality, speakers) under negotiable specs, and keep non-negotiable specs to at most 4.
 State non-negotiable specs as minimum thresholds or classes (for example 'RAM at least 8 GB', 'Intel Core i5 or Ryzen 5 or better'), never as specific model numbers or the highest configuration.
+Do not make a spec non-negotiable unless the user's request states it or the use case clearly requires it; for a general request, use broad thresholds and put everything else under negotiable.
 
 IMPORTANT budget-realism constraint: if a budget is provided (not null), every non-negotiable spec you choose must be realistic and commonly available at that price point in the Indian market for this product category. Do not pick a spec tier that structurally forces the price far above the budget — for example, for a plain productivity/coding laptop with a budget under ₹60,000, do not require an H-series or HX-series processor (these are gaming/performance chips typically bundled with a dedicated GPU, pushing price well beyond that range) — prefer a U-series or equivalent power-efficient processor instead, since dedicated graphics are not needed for the stated usecase. Only require higher-tier, costlier specs as non-negotiable if the usecase genuinely cannot function without them (e.g. GPU is genuinely non-negotiable for gaming or ML, but not for general coding/productivity).
 
