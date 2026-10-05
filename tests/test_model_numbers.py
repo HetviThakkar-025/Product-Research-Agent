@@ -20,6 +20,15 @@ class ModelNumbersTest(unittest.TestCase):
         for hex_id in ("ec1eb99eca6c", "b1e596c09d6d", "3f2a9c1b7e4d5a60"):
             self.assertEqual(tools.model_numbers(hex_id), set(), hex_id)
 
+    def test_8_char_hex_ids_excluded(self):
+        # ids seen next to Samsung page prices in live run 3
+        for hex_id in ("dfa6080d", "edae522d", "DFA6080D"):
+            self.assertEqual(tools.model_numbers(hex_id), set(), hex_id)
+
+    def test_hp_models_from_live_runs_still_accepted(self):
+        for code in ("fd0022tu", "fd0577tu", "fy5007tu", "FD0022TU"):
+            self.assertEqual(tools.model_numbers(f"HP 15 {code} Laptop"), {code.lower()}, code)
+
     def test_unmixed_tokens_excluded(self):
         for token in ("abcdefghij", "1234567890", "thinkpadx", "a1234567"):
             self.assertEqual(tools.model_numbers(token), set(), token)

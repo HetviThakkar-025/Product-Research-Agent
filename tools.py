@@ -213,13 +213,13 @@ def model_numbers(product_name):
     """
     Model-number-like tokens in a product name, e.g. RT38HG5A42S8HL, 82RK0085IN, fq5112tu.
     Requires 8+ chars mixing 2+ letters and 3+ digits, so CPU/GPU/RAM tokens (i5-1235U, RTX4050, 16GB) and
-    all-letter or all-digit tokens don't count; Amazon ASINs and long hex ids (image hashes) are not models either.
+    all-letter or all-digit tokens don't count; Amazon ASINs and 8+ char hex ids (image hashes) are not models either.
     """
     return {token for token in re.findall(r'[a-z0-9]+', product_name.lower()) if _is_model_token(token)}
 
 
 ASIN_RE = re.compile(r'b0[a-z0-9]{8}')     # Amazon product id, e.g. b0d2y1bldt
-LONG_HEX_RE = re.compile(r'[0-9a-f]{12,}')  # image/asset hashes, e.g. ec1eb99eca6c
+LONG_HEX_RE = re.compile(r'[0-9a-f]{8,}')   # image/asset hashes, e.g. ec1eb99eca6c, dfa6080d
 
 
 def _is_model_token(token):
