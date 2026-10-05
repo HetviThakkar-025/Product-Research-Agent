@@ -74,6 +74,21 @@ class ProductMatchTest(unittest.TestCase):
         title = "HP 15s, 12th Gen Intel Core i5 1235U, 8 GB DDR4 Ram, 512GB SSD"
         self.assertEqual(tools.product_match(c, HP15S_URL, title, ""), 'brand and specs')
 
+    def test_known_model_requires_model_match_hp15_vs_hp15s(self):
+        # brand + specs (hp, i5-1235u, 8gb, 512gb) all match, but the models differ
+        c = candidate("HP 15 fd0070TU Intel Core i5-1235U 8GB 512GB SSD", url="https://www.flipkart.com/hp/p/itm123")
+        title = "HP 15s,12th Gen Intel Core i5-1235U, 8GB DDR4 Ram, 512GB SSD, (Win 11, Silver, 1.69 kg),15.6-inch, fy5007TU"
+        self.assertIsNone(tools.product_match(c, HP15S_URL, title, ""))
+
+    def test_duplicate_model_also_requires_model_match(self):
+        c = candidate(url="https://www.flipkart.com/hp/p/itm123", model_numbers=['fd0070tu'])
+        title = "HP 15s,12th Gen Intel Core i5-1235U, 8GB DDR4 Ram, 512GB SSD, fy5007TU"
+        self.assertIsNone(tools.product_match(c, HP15S_URL, title, ""))
+
+    def test_known_model_same_url_still_matches(self):
+        c = candidate("HP 15 fd0070TU", url=HP15_URL)
+        self.assertEqual(tools.product_match(c, HP15_URL + "?ref=x", "carousel page", ""), 'same url')
+
     def test_brand_alone_is_not_enough(self):
         c = candidate(url="https://www.flipkart.com/hp/p/itm123")
         self.assertIsNone(tools.product_match(c, HP15S_URL, "HP 15s, Intel Core i3-1215U, 8GB, 512GB SSD", ""))

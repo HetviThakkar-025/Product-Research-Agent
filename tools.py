@@ -227,8 +227,9 @@ DISTINCTIVE_TOKEN_RE = re.compile(r'i[3579]-\d{4,5}[a-z]{0,2}|\d{4,5}[a-z]{1,2}|
 def product_match(candidate, url, title, content):
     """
     How a price source is tied to this candidate, else None. In order: one of the candidate's model numbers
-    (its name plus those of dropped duplicates) in the source title/content; the same product page URL;
-    the brand plus every distinctive name token (CPU model, RAM/storage sizes) in the source title/content.
+    (its name, dropped duplicates, own result title) in the source title/content; the same product page URL;
+    and, only when no model number is known, the brand plus every distinctive name token (CPU model,
+    RAM/storage sizes) in the source title/content.
     """
     source_text = f"{title} {content}"
     models = model_numbers(candidate['product_name']) | set(candidate.get('model_numbers', []))
@@ -237,6 +238,9 @@ def product_match(candidate, url, title, content):
 
     if normalize_product_url(url) == normalize_product_url(candidate.get('source_url', '')):
         return 'same url'
+    if models:
+        # a known model number must match; brand + specs would accept sibling models (HP 15 fd0070TU vs 15s fy5007TU)
+        return None
 
     name_tokens = _spec_tokens(candidate['product_name'])
     brand = re.findall(r'[a-z0-9]+', candidate['product_name'].lower())[:1]
