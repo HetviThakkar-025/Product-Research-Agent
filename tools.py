@@ -24,13 +24,13 @@ prompt1 = PromptTemplate(
 
 Shorten them into 2-4 word keyword phrases suitable for a product search query.
 
-Prioritize only the specs that meaningfully narrow a product search: CPU/processor, GPU/graphics, RAM, storage, display size/resolution, and operating system.
+Prioritize the specs that meaningfully narrow a product search for this kind of product: for example CPU/processor, GPU/graphics, RAM, storage, display size/resolution and operating system for a laptop, or capacity, type, energy rating and brand for an appliance.
 
 Skip specs that are minor or unusual for search purposes (e.g. keyboard type, port types, weight, battery life, build material) — even if they are technically required, they add noise to a search query rather than helping find matching products.
 
 Use at most 4 specs in total: keep only the 3-4 that narrow the search the most.
 
-Output the result as a single space-separated line, not a list.""",
+Output the result as a single space-separated line, not a list. Always output at least one keyword phrase.""",
     input_variables=['specs']
 )
 
@@ -143,7 +143,70 @@ def invoke_with_retry(chain, inputs, max_retries=3):
                 time.sleep(wait_time)
 
 
-def build_query(call_b_result, include_negotiable=True):
+# words in a shopping request that are not product specs (budget amounts are removed separately)
+REQUEST_STOPWORDS = {
+    'i', 'im', 'want', 'wanted', 'need', 'needs', 'looking', 'look', 'for', 'a', 'an', 'the', 'to', 'buy', 'buying',
+    'purchase', 'get', 'me', 'my', 'we', 'our', 'us', 'please', 'with', 'and', 'or', 'of', 'in', 'on', 'at', 'is', 'it',
+    'its', 'that', 'this', 'some', 'any', 'good', 'best', 'new', 'should', 'be', 'have', 'has', 'which', 'can', 'would',
+    'like', 'under', 'below', 'within', 'around', 'about', 'upto', 'up', 'budget', 'price', 'less', 'than', 'max',
+    'maximum', 'range', 'between', 'something', 'also', 'prefer', 'preferably', 'will', 'use', 'used', 'using', 'just',
+    'only', 'rs', 'inr', 'rupees', 'k', 'thousand', 'lakh', 'lakhs',
+}
+MONEY_BEFORE = {'rs', 'inr', 'under', 'below', 'within', 'budget', 'upto', 'around', 'about', 'than', 'max', 'maximum'}
+MONEY_AFTER = {'k', 'thousand', 'lakh', 'lakhs', 'rupees', 'rs', 'inr'}
+UNIT_WORDS = {'l', 'litre', 'litres', 'liter', 'liters', 'ltr', 'star', 'stars', 'door', 'doors', 'ton', 'tons', 'kg',
+              'gb', 'tb', 'inch', 'inches', 'cm', 'w', 'watt', 'watts', 'hz', 'mah', 'mp'}
+SPEC_FILLER = {'at', 'least', 'or', 'higher', 'better', 'any', 'and', 'more', 'above', 'minimum', 'min', 'than', 'optional'}
+MIN_QUERY_WORDS = 3
+
+
+def request_keywords(user_query, category):
+    """
+    The user's own spec words from their request (e.g. "double door frost free 250 litre 3 star"), without filler
+    words, budget amounts or the category itself; in order, without repeats.
+    """
+    text = re.sub(r'(?<=\d),(?=\d)', '', (user_query or '').lower().replace('₹', ' rs '))  # 45,000 -> 45000
+    tokens = re.findall(r'[a-z0-9]+(?:\.[0-9]+)?', text)
+    category_words = set(re.findall(r'[a-z0-9]+', (category or '').lower()))
+    keywords = []
+    for i, token in enumerate(tokens):
+        previous, following = tokens[i - 1] if i else '', tokens[i + 1] if i + 1 < len(tokens) else ''
+        if token in REQUEST_STOPWORDS or token in category_words or token in keywords:
+            continue
+        if token.replace('.', '').isdigit() and (
+                previous in MONEY_BEFORE or following in MONEY_AFTER
+                or (float(token) >= 1000 and following not in UNIT_WORDS)):
+            continue  # a budget amount, not a spec
+        shorthand = re.fullmatch(r'(\d+(?:\.\d+)?)k', token)
+        if shorthand and (previous in MONEY_BEFORE or float(shorthand.group(1)) >= 10):
+            continue  # "60k" is a budget; "4k"/"8k" (display) are kept
+        keywords.append(token)
+    return " ".join(keywords)
+
+
+def _join_unique(*parts):
+    """Words of the parts in order, skipping any word (case-insensitive) already included."""
+    words, seen = [], set()
+    for part in parts:
+        for word in (part or '').split():
+            if word.lower() not in seen:
+                seen.add(word.lower())
+                words.append(word)
+    return " ".join(words)
+
+
+def _spec_value_keywords(specs):
+    """Last-resort query words from the structured spec values, without threshold filler ("at least", "or better")."""
+    return " ".join(w for value in specs.values() for w in re.findall(r'[A-Za-z0-9][A-Za-z0-9.-]*', str(value))
+                    if w.lower() not in SPEC_FILLER)
+
+
+def build_query(call_b_result, include_negotiable=True, user_query=""):
+    """
+    Search query: category + the user's own spec words from their request + the LLM keyword rewrite of the
+    structured specs. If the rewrite is empty, the user's words carry the query (or, without any, the spec values),
+    so the query is never just the category.
+    """
     category = call_b_result["category"]
     # copy, don't mutate original
     specs = dict(call_b_result["non_negotiable_specs"])
@@ -155,30 +218,44 @@ def build_query(call_b_result, include_negotiable=True):
             specs[key] = value
 
     chain = prompt1 | llm | parser
-    result = invoke_with_retry(chain, {"specs": specs})
+    rewrite = invoke_with_retry(chain, {"specs": specs}).strip()
+    user_words = request_keywords(user_query, category)
+    if not rewrite:
+        print(f"Query rewrite returned nothing for {specs}; using the user's own words")
+        if not user_words:
+            rewrite = _spec_value_keywords(specs)
 
     # no "India/INR only" phrase: include_domains already restricts to Indian retailers,
     # and the extra words pulled results toward listing/search pages
-    query = category + " " + result.strip()
-
-    return query
+    return _join_unique(category, user_words, rewrite)
 
 
-def drop_spec_from_query(query, call_b_result):
+def drop_spec_from_query(query, call_b_result, keep_words=""):
     """
-    Search attempt 2's query: the iteration's rewrite with one core (non-negotiable) spec's words removed,
-    so a retry never repeats the same text. Specs are tried last to first; if none of their words are in
-    the query, the last word is dropped instead. Returns (query, dropped spec key or None).
+    Search attempt 2's query: the iteration's query with one core (non-negotiable) spec's words removed, so a retry
+    never repeats the same text. Specs are tried last to first; if none can go, the last word is dropped. The user's
+    own words (keep_words) are never dropped, and the query never shrinks below 3 words or to just the category:
+    a minimal query is varied instead ("buy online price" appended, or the spec words reversed).
+    Returns (query, what was done).
     """
     words = query.split()
     keep = len(call_b_result["category"].split())  # the category prefix always stays
     head, tail = words[:keep], words[keep:]
+    protected = {w.lower() for w in keep_words.split()}
+
+    def long_enough(rest):
+        return rest and len(head) + len(rest) >= MIN_QUERY_WORDS
+
     for key, value in reversed(list(call_b_result["non_negotiable_specs"].items())):
         spec_tokens = _spec_tokens(f"{key} {value}")
-        remaining = [w for w in tail if not (_spec_tokens(w) and _spec_tokens(w) <= spec_tokens)]
-        if remaining and len(remaining) < len(tail):
-            return " ".join(head + remaining), key
-    return " ".join(head + tail[:-1]), None
+        remaining = [w for w in tail if w.lower() in protected or not (_spec_tokens(w) and _spec_tokens(w) <= spec_tokens)]
+        if len(remaining) < len(tail) and long_enough(remaining):
+            return " ".join(head + remaining), f"dropped {key!r}"
+    if tail and tail[-1].lower() not in protected and long_enough(tail[:-1]):
+        return " ".join(head + tail[:-1]), "dropped the last word"
+    if not query.lower().endswith("buy online price"):
+        return _join_unique(query, "buy online price"), "added 'buy online price'"
+    return " ".join(head + tail[::-1]), "reversed the word order"
 
 
 def has_path(url):

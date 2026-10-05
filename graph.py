@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import call_a_chain, branch_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, budget_note, realistic_budget_text, format_inr, spec_status, gap_advice, report_issues, trim_to_section_1, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded, emit_event, emit_progress
+from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, request_keywords, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, budget_note, realistic_budget_text, format_inr, spec_status, gap_advice, report_issues, trim_to_section_1, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded, emit_event, emit_progress
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -122,12 +122,14 @@ def search(state, config):
     if attempt == 1:
         # one rewrite per iteration; later attempts reuse it with one core spec dropped
         iteration_query = build_query(call_b_result=state["requirements"],
-                                      include_negotiable=use_negotiable)
+                                      include_negotiable=use_negotiable, user_query=state["user_query"])
         query = iteration_query
     else:
         iteration_query = state["iteration_query"]
-        query, dropped = drop_spec_from_query(iteration_query, state["requirements"])
-        print(f"Search attempt {attempt}: dropped {repr(dropped) if dropped else 'the last word'} from {iteration_query!r}")
+        # the user's own words stay in every retry
+        user_words = request_keywords(state["user_query"], state["requirements"]["category"])
+        query, change = drop_spec_from_query(iteration_query, state["requirements"], keep_words=user_words)
+        print(f"Search attempt {attempt}: {change} in {iteration_query!r} -> {query!r}")
 
     search_tool.max_results = SEARCH_MAX_RESULTS + (attempt - 1) * 3
     result = search_tool.invoke({"query": query})
