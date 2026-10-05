@@ -1,4 +1,5 @@
 import re
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 import time
 from groq import RateLimitError, APIStatusError
@@ -155,7 +156,16 @@ def drop_spec_from_query(query, call_b_result):
     return " ".join(head + tail[:-1]), None
 
 
+def has_path(url):
+    """False for a bare domain or path-less URL such as https://www.vijaysales.com/ (scheme optional)."""
+    parsed = urlparse(url if '://' in url else f"https://{url}")
+    return bool(parsed.path.strip('/'))
+
+
 def is_product_page_url(url):
+    if not has_path(url):
+        return False
+
     listing_patterns = ['/s?', '/s/', 'search', '/l/',
                         '/b', '/b/', '/c/', 'clp', 'collection']
     product_patterns = ['/dp/', '/p/itm', '/product/']
@@ -418,8 +428,9 @@ def filter_hallucinated_candidates(candidates, raw_results):
                 f"Dropped candidate with missing source_url: {candidate.get('product_name')}")
             continue
 
-        is_real = any(
-            source in real_url or real_url in source for real_url in real_urls)
+        # a bare domain is a substring of every URL on that site, so it can never count as a match
+        is_real = has_path(source) and any(
+            source in real_url or real_url in source for real_url in real_urls if has_path(real_url))
         if not is_real:
             print(
                 f"Dropped hallucinated candidate: {candidate['product_name']} (fake source: {source})")
