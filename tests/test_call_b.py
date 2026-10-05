@@ -59,6 +59,11 @@ class CallBRequestTest(unittest.TestCase):
         self.assertEqual(cleaned, {"category": "tv", "budget": 30000, "non_negotiable_specs": {"size": "43 inch"},
                                    "negotiable_specs": None})
 
+    def test_prompt2_omit_empty_specs_line_once(self):
+        line = "Omit a spec entirely if you have no value for it; never output null or empty values."
+        self.assertEqual(prompts.prompt2.template.count(line), 1)
+        self.assertIn(KEEP_SENTENCE + "\n" + line + "\n", prompts.prompt2.template)
+
     def test_schema_allows_null_spec_values(self):
         props = prompts.call_b["properties"]
         self.assertEqual(props["non_negotiable_specs"]["additionalProperties"], {"type": ["string", "null"]})
