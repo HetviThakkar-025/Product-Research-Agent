@@ -3,7 +3,7 @@ from typing import TypedDict
 
 from langgraph.graph import StateGraph, START, END
 
-from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
+from prompts import call_a_chain, branch_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
 from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, recommendation_headline, budget_note, realistic_budget_text, format_inr, spec_status, report_issues, trim_to_section_1, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded, emit_event, emit_progress
 
 MAX_ITERATIONS = 4
@@ -21,6 +21,7 @@ PLAUSIBLE_PRICE_RANGE = (0.25, 3)
 
 class AgentState(TypedDict, total=False):
     user_query: str
+    previous_question: str         # the clarifying question this query answers, if any (input)
     requirements: dict             # Call B output
     clarify_question: str          # set only when Call A says the query is unclear
     iteration: int
@@ -81,8 +82,23 @@ def _log(config, msg):
 
 # ---------- nodes ----------
 
+# assumed when a clarifying question gets a budget but no use case; prompt A itself counts it as a stated use case
+DEFAULT_USECASE = "general everyday use"
+
+
 def intake(state, config):
-    call_b_output = invoke_with_retry(final_chain, {"query": state["user_query"]})
+    # Call A, then the branch (question, or Call B): the same steps as final_chain, split so Call A's output can be checked
+    call_a_output = invoke_with_retry(call_a_chain, {"query": state["user_query"]})
+
+    # Answering a clarifying question with only a budget made Call A ask the same use-case question again
+    if (state.get("previous_question") and call_a_output.get("status") == "unclear"
+            and call_a_output.get("budget") is not None and not call_a_output.get("usecase")
+            and call_a_output.get("category")):
+        print(f"Clarify loop avoided: no use case given after {state['previous_question']!r}; "
+              f"assuming {DEFAULT_USECASE!r}")
+        call_a_output = {**call_a_output, "status": "clear", "usecase": DEFAULT_USECASE}
+
+    call_b_output = invoke_with_retry(branch_chain, call_a_output)
 
     if isinstance(call_b_output, str):
         return {"clarify_question": call_b_output}

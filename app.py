@@ -44,6 +44,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
     st.session_state.context = ""
     st.session_state.awaiting_clarification = False
+    st.session_state.last_question = None
 
 # ---------- header row: title + reset button, no sidebar ----------
 header_col1, header_col2 = st.columns([4, 1])
@@ -56,6 +57,7 @@ with header_col2:
         st.session_state.messages = []
         st.session_state.context = ""
         st.session_state.awaiting_clarification = False
+        st.session_state.last_question = None
         st.rerun()
 
 for msg in st.session_state.messages:
@@ -91,7 +93,8 @@ if user_input:
                     final.update(event)
 
         try:
-            events = run_pipeline_stream(st.session_state.context)
+            previous_question = st.session_state.last_question if st.session_state.awaiting_clarification else None
+            events = run_pipeline_stream(st.session_state.context, previous_question=previous_question)
             headline, first_token = None, ""
             with status_box:
                 for event in events:
@@ -112,6 +115,7 @@ if user_input:
                 reply = final["question"]
                 st.markdown(reply, unsafe_allow_html=True)
                 st.session_state.awaiting_clarification = True
+                st.session_state.last_question = reply
             else:
                 status_box.update(label="Writing the report...", state="running", expanded=False)
                 if headline:

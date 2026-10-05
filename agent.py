@@ -31,7 +31,7 @@ def run_pipeline(user_query, progress_callback=None):
     return _result(final_state)
 
 
-def run_pipeline_stream(user_query):
+def run_pipeline_stream(user_query, previous_question=None):
     """
     Same pipeline as run_pipeline, streamed. Yields, in order of arrival:
       {"type": "progress", "text": str}  the progress wording nodes already use, plus Groq rate-limit waits
@@ -39,11 +39,14 @@ def run_pipeline_stream(user_query):
       {"type": "token", "text": str}     report text as it is generated (report node only, never reasoning),
                                          starting at the section 1 heading like the stored report
       {"type": "final", **result}        last; result is the dict run_pipeline returns
+    previous_question is the clarifying question user_query answers, if any (stops the same question being re-asked).
     Exceptions (e.g. DailyQuotaExceeded) propagate to the caller.
     """
     state = {"user_query": user_query}
+    if previous_question:
+        state["previous_question"] = previous_question
     held_back, report_started = "", False  # report text is held until its section 1 heading appears
-    for mode, chunk in _graph.stream({"user_query": user_query}, config=make_config(), stream_mode=STREAM_MODES):
+    for mode, chunk in _graph.stream(dict(state), config=make_config(), stream_mode=STREAM_MODES):
         if mode == "custom":
             yield chunk
         elif mode == "messages":
