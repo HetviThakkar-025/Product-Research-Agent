@@ -79,6 +79,13 @@ class SpecKeyPromptTest(unittest.TestCase):
         self.assertIn(sentence_c, prompts.prompt3.template)
         self.assertIn(sentence_d, prompts.prompt4.template)
 
+    def test_call_b_prompt_has_checkable_specs_sentence_once(self):
+        sentence = ("Only mark a spec non-negotiable if product listings state it as a concrete, checkable value "
+                    "(e.g. processor, RAM, storage, display size/resolution); put subjective or rarely listed qualities "
+                    "(keyboard feel, build quality, speakers) under negotiable specs, and keep non-negotiable specs to at most 4.")
+        self.assertEqual(prompts.prompt2.template.count(sentence), 1)
+        self.assertIn("which can be ignored if there are budget constraints.\n" + sentence + "\n", prompts.prompt2.template)
+
     def test_no_negotiable_specs(self):
         self.assertEqual(graph.spec_key_names({'non_negotiable_specs': {'a': '1'}, 'negotiable_specs': None}), ['a'])
 
