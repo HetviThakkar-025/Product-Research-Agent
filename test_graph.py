@@ -79,7 +79,8 @@ def summarize(node, update):
     if node == "search":
         urls = list(update.get("search_snippets", {}))
         product_pages = sum(is_product_page_url(u) for u in urls)
-        return f"attempt={update['search_attempt']} results={len(urls)} product_pages={product_pages}/{len(urls)}"
+        return (f"attempt={update['search_attempt']} query={update.get('search_query')!r} "
+                f"results={len(urls)} product_pages={product_pages}/{len(urls)}")
     if node in ("extract_candidates", "verify_specs", "check_prices", "score_fit"):
         return ", ".join(
             f"{c['product_name']} (specs_found={c.get('specs_found')}, price={c.get('price')}, "

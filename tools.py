@@ -138,6 +138,23 @@ def build_query(call_b_result, include_negotiable=True):
     return query
 
 
+def drop_spec_from_query(query, call_b_result):
+    """
+    Search attempt 2's query: the iteration's rewrite with one core (non-negotiable) spec's words removed,
+    so a retry never repeats the same text. Specs are tried last to first; if none of their words are in
+    the query, the last word is dropped instead. Returns (query, dropped spec key or None).
+    """
+    words = query.split()
+    keep = len(call_b_result["category"].split())  # the category prefix always stays
+    head, tail = words[:keep], words[keep:]
+    for key, value in reversed(list(call_b_result["non_negotiable_specs"].items())):
+        spec_tokens = _spec_tokens(f"{key} {value}")
+        remaining = [w for w in tail if not (_spec_tokens(w) and _spec_tokens(w) <= spec_tokens)]
+        if remaining and len(remaining) < len(tail):
+            return " ".join(head + remaining), key
+    return " ".join(head + tail[:-1]), None
+
+
 def is_product_page_url(url):
     listing_patterns = ['/s?', '/s/', 'search', '/l/',
                         '/b', '/b/', '/c/', 'clp', 'collection']

@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded
+from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -25,6 +25,8 @@ class AgentState(TypedDict, total=False):
     clarify_question: str          # set only when Call A says the query is unclear
     iteration: int
     search_attempt: int            # 1..SEARCH_ATTEMPTS within the current iteration
+    iteration_query: str           # this iteration's LLM query rewrite, reused by its later search attempts
+    search_query: str              # query text actually searched by the latest attempt
     search_results: dict           # trimmed/capped results, fed to Call C and the hallucination check
     search_snippets: dict          # clean url -> full (untrimmed) search content, the primary price source
     new_candidates: list
@@ -100,8 +102,15 @@ def search(state, config):
     # iteration-based relaxation: negotiable specs only nudge the query in iterations 1-2
     use_negotiable = state["iteration"] < 3
 
-    query = build_query(call_b_result=state["requirements"],
-                        include_negotiable=use_negotiable)
+    if attempt == 1:
+        # one rewrite per iteration; later attempts reuse it with one core spec dropped
+        iteration_query = build_query(call_b_result=state["requirements"],
+                                      include_negotiable=use_negotiable)
+        query = iteration_query
+    else:
+        iteration_query = state["iteration_query"]
+        query, dropped = drop_spec_from_query(iteration_query, state["requirements"])
+        print(f"Search attempt {attempt}: dropped {repr(dropped) if dropped else 'the last word'} from {iteration_query!r}")
 
     search_tool.max_results = SEARCH_MAX_RESULTS + (attempt - 1) * 3
     result = search_tool.invoke({"query": query})
@@ -111,8 +120,8 @@ def search(state, config):
     result = drop_repeated_title(result)
     result = cap_results(result, max_for_llm=5)
 
-    return {"search_attempt": attempt, "search_results": result,
-            "search_snippets": search_snippets, "new_candidates": []}
+    return {"search_attempt": attempt, "search_results": result, "search_snippets": search_snippets,
+            "iteration_query": iteration_query, "search_query": query, "new_candidates": []}
 
 
 def extract_candidates(state, config):
