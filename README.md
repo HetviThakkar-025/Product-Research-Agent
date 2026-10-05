@@ -20,6 +20,8 @@ You type something like _"I want a laptop for coding, budget around 50000 INR"_ 
 8. **Writes a full report** once it has enough good options (or runs out of attempts) — requirements summary, comparison table, fit scores with reasoning, and a final pick.
 9. **Is honest when nothing fits** — if no product matches your budget, it explains the gap and suggests a realistic budget or which requirement to relax, instead of failing silently.
 
+In the app you see each step's progress live while it works (including any wait for the AI service's rate limit), and the report streams in as it is written, after its one-line recommendation.
+
 ---
 
 ## Why this was harder than it sounds

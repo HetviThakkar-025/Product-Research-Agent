@@ -34,10 +34,20 @@ The two diamonds are routing functions, not nodes: `_retry_search_or_move_on` an
 - **merge**: dedupes the iteration's candidates into `all_candidates`. No LLM call.
 - **report**: ranks candidates (verified in budget, verified over budget by gap, then unpriced; max 4) and builds the Final Recommendation headline in Python. Then writes the Markdown report with the report LLM call.
 
+## Streaming
+
+`agent.run_pipeline_stream()` runs `graph.stream(stream_mode=["updates", "messages", "custom"])` and yields:
+- `progress` events: node progress text, plus Groq rate-limit waits sent with `get_stream_writer`;
+- one `headline` event: the Python-built recommendation sentence;
+- `token` events: report-node text only, never reasoning or other nodes' output;
+- a last `final` event carrying the `run_pipeline()` result.
+
+`app.py` writes progress inside `st.status` and streams the tokens with `st.write_stream`.
+
 ## Files
 
 - `app.py`: Streamlit chat UI; calls `agent.run_pipeline()`.
-- `agent.py`: `run_pipeline()` wrapper that invokes the compiled graph and shapes the result for the UI.
+- `agent.py`: `run_pipeline()` (invokes the compiled graph) and `run_pipeline_stream()` (streams it), both shaping the result for the UI.
 - `graph.py`: state schema, nodes, routing functions and `build_graph()`.
 - `tools.py`: Tavily search/extract wrappers, URL and listing filters, model-number parsing, price attribution, retries (`invoke_with_retry`), report ranking and headline.
 - `prompts.py`: Groq models, structured-output schemas, prompts for Calls A–F and the report, and the intake chain.
