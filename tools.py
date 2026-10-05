@@ -61,6 +61,9 @@ class LLMRetriesExhausted(Exception):
 TOOL_USE_FAILED_RETRIES = 2
 RETRY_MARGIN_SECONDS = 1.0
 MAX_RETRY_WAIT_SECONDS = 65
+# Groq's per-minute token window: Groq's own "try again in Xs" hint is often too short when the minute's budget is
+# used up, so from a call's second 429 on we wait out the rest of the minute since its first 429
+TPM_WINDOW_SECONDS = 60
 
 
 def parse_retry_after(error):
@@ -84,6 +87,7 @@ def invoke_with_retry(chain, inputs, max_retries=3):
     rate_limit_retries = 0
     tool_use_retries = 0
     other_retries = 0
+    first_rate_limit_at = None
 
     while True:
         try:
@@ -108,6 +112,11 @@ def invoke_with_retry(chain, inputs, max_retries=3):
                 retry_after = parse_retry_after(e)
                 wait_time = min(retry_after + RETRY_MARGIN_SECONDS, MAX_RETRY_WAIT_SECONDS) \
                     if retry_after is not None else min(2 ** rate_limit_retries, 10)
+                if first_rate_limit_at is None:
+                    first_rate_limit_at = time.monotonic()
+                else:
+                    rest_of_minute = TPM_WINDOW_SECONDS - (time.monotonic() - first_rate_limit_at)
+                    wait_time = min(TPM_WINDOW_SECONDS, max(wait_time, rest_of_minute))
                 print(f"Waiting {wait_time:.1f}s before retry {rate_limit_retries}/{max_retries}...")
                 # streamed to the UI, so a long rate-limit wait doesn't look frozen
                 emit_progress(f"Waiting {wait_time:.0f}s for Groq rate limit, retry {rate_limit_retries}/{max_retries}")
