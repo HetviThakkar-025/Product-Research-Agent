@@ -39,7 +39,7 @@ def answers(product_pages=True):
     if product_pages:
         retail += [{"url": PRODUCT_URL, "title": "HP 15 fd0070TU : Amazon.in: Electronics",
                     "content": "HP 15 fd0070TU i5-1235U 8GB RAM Buy for ₹52,990", "score": 0.8},
-                   {"url": PRODUCT_URL_2, "title": "HP 15s fy5007TU", "content": "i5-1235U ₹52,990", "score": 0.7}]
+                   {"url": PRODUCT_URL_2, "title": "HP 15s fy5007TU", "content": "HP 15s fy5007TU i5-1235U ₹52,990", "score": 0.7}]
 
     def search(query, domains):
         if domains == tools.SPEC_DOMAINS:

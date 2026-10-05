@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from prompts import final_chain, prompt3, str_model_call_c, prompt4, str_model_call_d, prompt5, str_model_call_e, prompt6, str_model_call_f, report_chain
-from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded
+from tools import search_tool, get_official_specs, build_query, drop_spec_from_query, filter_hallucinated_candidates, cap_results, select_report_candidates, suggest_realistic_budget, filter_by_domain, trim_results, drop_repeated_title, invoke_with_retry, extract_price, search_price_fallback, extract_price_snippets, rupee_amounts, attribute_prices, find_search_snippet, is_product_page_url, normalize_product_url, model_numbers, product_match, RETAIL_DOMAINS, DailyQuotaExceeded
 
 MAX_ITERATIONS = 4
 MIN_QUALIFIED = 2
@@ -152,6 +152,10 @@ def extract_candidates(state, config):
     for candidate in new_candidates:
         candidate['search_snippet'] = find_search_snippet(
             candidate['source_url'], state.get("search_snippets", {}))
+        # model numbers in the candidate's own result title are its own, for telling its price from others' on the page
+        own_title = find_search_snippet(candidate['source_url'], {r['url']: r.get('title', '') for r in result['results']})
+        if model_numbers(own_title):
+            candidate['model_numbers'] = sorted(set(candidate.get('model_numbers', [])) | model_numbers(own_title))
 
     return {"new_candidates": new_candidates, "all_candidates": all_candidates}
 
@@ -193,14 +197,26 @@ def verify_specs(state, config):
 
 
 def _price_sources(candidate):
-    """(label, fetch) in priority order; fetch() returns [(url, ₹ snippets)] and only runs if earlier sources found no price."""
+    """(label, fetch) in priority order; fetch() returns [(url, text)] and only runs if earlier sources found no price."""
     source_url = candidate['source_url']
     return [
-        ('search_snippet', lambda: [(source_url, extract_price_snippets(candidate.get('search_snippet', '')))]),
+        ('search_snippet', lambda: [(source_url, candidate.get('search_snippet', ''))]),
         ('page_extract', lambda: [(source_url, extract_price(source_url))]),
-        ('fallback_search', lambda: [(r['url'], extract_price_snippets(r['content']))
-                                     for r in _matching_fallback_results(candidate)]),
+        ('fallback_search', lambda: [(r['url'], r['content']) for r in _matching_fallback_results(candidate)]),
     ]
+
+
+def _attributed_sources(candidate, label, texts):
+    """[(url, ₹ snippets, amounts)] built only from the ₹ amounts attribute_prices ties to this candidate; logs the rest."""
+    sources = []
+    for url, text in texts:
+        kept, rejected = attribute_prices(candidate, text)
+        for amount, reason in dict.fromkeys(rejected):  # "₹X₹X" repeats are logged once
+            print(f"Rejected price: {reason} for {candidate['product_name']}: {amount} ({label}: {url})")
+        if kept:
+            amounts = set().union(*(rupee_amounts(m.group()) for m in kept))
+            sources.append((url, extract_price_snippets(text, matches=kept), amounts))
+    return sources
 
 
 def _matching_fallback_results(candidate):
@@ -223,25 +239,25 @@ def is_plausible_price(price, budget):
 
 def _price_from_snippets(product_name, sources):
     """
-    Call E on the ₹ snippets from sources [(url, snippets)]. The price is accepted only if that exact
-    ₹ amount appears literally in one of the sources, so the LLM can never invent one.
+    Call E on the ₹ snippets from sources [(url, snippets, amounts)]. The price is accepted only if it is one of
+    the ₹ amounts attributed to the candidate in a source, so the LLM can never invent one or pick another product's.
     Returns (E result with price possibly nulled, url the price came from).
     """
     call_e_chain = prompt5 | str_model_call_e
     price_result = invoke_with_retry(call_e_chain, {
         'product_name': product_name,
-        'page_content': "\n---\n".join(snippets for _, snippets in sources)
+        'page_content': "\n---\n".join(snippets for _, snippets, _ in sources)
     })
 
     price = price_result.get('price')
     if price is None:
         return price_result, None
 
-    for url, snippets in sources:
-        if price in rupee_amounts(snippets):
+    for url, _, amounts in sources:
+        if price in amounts:
             return price_result, url
 
-    print(f"Rejected price {price} for {product_name}: no matching ₹ amount in the source text")
+    print(f"Rejected price {price} for {product_name}: not one of the ₹ amounts attributed to it")
     return {**price_result, 'price': None}, None
 
 
@@ -259,7 +275,7 @@ def check_prices(state, config):
         for label, fetch in _price_sources(candidate):
             tried.append(label)
             try:
-                sources = [(url, snippets) for url, snippets in fetch() if snippets]
+                sources = _attributed_sources(candidate, label, [(url, text) for url, text in fetch() if text])
                 if not sources:
                     continue
                 result, url = _price_from_snippets(candidate['product_name'], sources)

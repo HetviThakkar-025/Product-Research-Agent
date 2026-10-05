@@ -1,6 +1,6 @@
 """
-Price attribution: product match for fallback sources, model numbers kept from dropped duplicates,
-and the 0.25x-3x budget plausibility bound. Uses the real Tavily fallback response for the HP 15
+Price attribution: product match for fallback sources, model numbers kept from dropped duplicates and
+the own result title, ₹ amounts kept only near the candidate's own model/name, and the 0.25x-3x budget bound. Uses the real Tavily fallback response for the HP 15
 candidate from the 2026-10-05 laptop run (tests/fixtures/tavily_fallback_hp15.json).
 """
 import contextlib
@@ -107,6 +107,19 @@ class DuplicateModelNumbersTest(unittest.TestCase):
         self.assertEqual(update["all_candidates"][0]['model_numbers'], ['fd0070tu'])
         self.assertNotIn('model_numbers', earlier, "state must not be mutated in place")
 
+    def test_own_result_title_models_stored(self):
+        state_title = "HP 15, 12 Gen Intel Core i5-1235U ... Backlit KB fd0070TU : Amazon.in: Electronics"
+        fake = FakeGroq({"Candidate-Extraction": lambda prompt: {"candidates": [
+            {"product_name": HP15_NAME, "source_url": HP15_URL, "known_specs": {"cpu": "i5"}, "specs_found": False}]}}).install()
+        state = {"requirements": {'non_negotiable_specs': {'processor': 'i5'}, 'negotiable_specs': None},
+                 "all_candidates": [], "search_snippets": {},
+                 "search_results": {"results": [{"url": HP15_URL, "title": state_title, "content": ""}]}}
+        try:
+            update = graph.extract_candidates(state, {})
+        finally:
+            fake.uninstall()
+        self.assertEqual(update["new_candidates"][0]['model_numbers'], ['fd0070tu'])
+
     def test_dropped_duplicate_models_stored_within_same_batch(self):
         update = self.run_extract([], [
             {"product_name": HP15_NAME, "source_url": HP15_URL, "known_specs": {"cpu": "i5"}, "specs_found": False},
@@ -115,19 +128,79 @@ class DuplicateModelNumbersTest(unittest.TestCase):
         self.assertEqual(update["new_candidates"][0]['model_numbers'], ['fd0070tu'])
 
 
+class AttributePricesTest(unittest.TestCase):
+    def amounts(self, text, **cand):
+        kept, rejected = tools.attribute_prices(candidate(**cand), text)
+        return [tools.rupee_amounts(m.group()).pop() for m in kept], sorted(set(rejected))
+
+    def test_own_model_nearby_kept(self):
+        self.assertEqual(self.amounts("HP 15 fd0070TU Buy for ₹52,990", model_numbers=['fd0070tu']), ([52990], []))
+
+    def test_other_model_nearby_rejected(self):
+        self.assertEqual(self.amounts("HP 15s fy5007TU ₹2,46,490", model_numbers=['fd0070tu']),
+                         ([], [(246490, 'other model nearby (fy5007tu)')]))
+
+    def test_nearest_preceding_model_decides(self):
+        text = "HP 15 fd0070TU ₹52,990 | Similar: HP 15s fy5007TU ₹2,46,490"
+        self.assertEqual(self.amounts(text, model_numbers=['fd0070tu']),
+                         ([52990], [(246490, 'other model nearby (fy5007tu)')]))
+
+    def test_name_prefix_nearby_kept_when_no_model_in_window(self):
+        self.assertEqual(self.amounts(f"{HP15_NAME}(39.6cm) Laptop, Silver Deal price ₹49,990"), ([49990], []))
+
+    def test_nothing_nearby_rejected(self):
+        self.assertEqual(self.amounts("Thin & Light Business/15.6\" -53%₹47,880.00"),
+                         ([], [(47880, 'product not named nearby')]))
+
+    def test_own_page_id_counts_as_own_model(self):
+        self.assertEqual(self.amounts("/dp/B0DCG26YC5 ₹52,990"), ([52990], []))
+
+    def test_without_known_model_any_model_nearby_is_other(self):
+        self.assertEqual(self.amounts("HP 15 fd0070TU ₹52,990", url="https://www.flipkart.com/hp/p/itm1"),
+                         ([], [(52990, 'other model nearby (fd0070tu)')]))
+
+    def test_real_carousel_page_yields_no_amount(self):
+        content = load_fixture("tavily_fallback_hp15.json")["results"][0]["content"]
+        kept, rejected = tools.attribute_prices(candidate(model_numbers=['fd0070tu']), content)
+        self.assertEqual(kept, [])
+        self.assertIn((246490, 'other model nearby (fy5007tu)'), rejected)
+        self.assertIn((47880, 'product not named nearby'), rejected)
+
+
 class CheckPricesTest(unittest.TestCase):
-    def test_live_run_price_246490_rejected_as_implausible(self):
-        # the run's case: the fallback hit the candidate's own page, whose content is a carousel of other laptops
-        [c], log, _ = check_prices([candidate()], lambda prompt: 246490)
+    def test_carousel_prices_on_own_page_rejected(self):
+        # the live run's case: the fallback hit the candidate's own page, whose content is a carousel of other laptops
+        for extra in ({}, {'model_numbers': ['fd0070tu']}):
+            [c], log, fake = check_prices([candidate(**extra)], lambda prompt: 47880)
+            self.assertIn(f"Rejected price: other model nearby (fy5007tu) for {HP15_NAME}: 246490 (fallback_search: {HP15_URL})", log)
+            self.assertIn(f"Rejected price: product not named nearby for {HP15_NAME}: 47880 (fallback_search: {HP15_URL})", log)
+            self.assertNotIn("Price-Extraction", fake.names())
+            self.assertIsNone(c['price'])
+            self.assertEqual(c['within_budget'], "unknown")
+
+    def test_implausible_price_rejected(self):
+        snippet = "HP 15 fd0070TU Buy for ₹2,46,490"
+        [c], log, _ = check_prices([candidate(search_snippet=snippet, model_numbers=['fd0070tu'])], lambda prompt: 246490)
         self.assertIn("Rejected implausible price 246490 for HP 15", log)
         self.assertIsNone(c['price'])
-        self.assertEqual(c['within_budget'], "unknown")
 
-    def test_known_gap_carousel_price_within_bound_is_accepted(self):
-        # KNOWN GAP: ₹47,880 is another laptop in the page's carousel, but the page matches by URL and the
-        # amount is plausible, so nothing rejects it. Pins current behaviour until a snippet-level check exists.
-        [c], log, _ = check_prices([candidate()], lambda prompt: 47880)
-        self.assertEqual((c['price'], c['price_source'], c['price_source_url']), (47880, 'fallback_search', HP15_URL))
+    def test_call_e_cannot_pick_a_rejected_amount(self):
+        snippet = "HP 15 fd0070TU ₹52,990 | Similar: HP 15s fy5007TU ₹54,990"
+        [c], log, _ = check_prices([candidate(search_snippet=snippet, model_numbers=['fd0070tu'])], lambda prompt: 54990)
+        self.assertIn("Rejected price 54990 for HP 15", log)
+        self.assertNotEqual(c['price_source'], 'search_snippet')
+
+    def test_page_extract_uses_full_page_text(self):
+        page = f"{HP15_NAME}(39.6cm) Laptop\nVisit the HP Store\nDeal price ₹49,990 Inclusive of all taxes"
+        fake = FakeGroq({"Price-Extraction": lambda prompt: {"price": 49990, "availability": "in_stock"}}).install()
+        tavily = FakeTavily(extract=lambda urls: {"results": [{"url": urls[0], "raw_content": page}]}).install()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                [c] = graph.check_prices({"requirements": REQUIREMENTS, "new_candidates": [candidate()]}, {})["new_candidates"]
+        finally:
+            fake.uninstall()
+            tavily.uninstall()
+        self.assertEqual((c['price'], c['price_source']), (49990, 'page_extract'))
 
     def test_mismatched_fallback_source_rejected_before_call_e(self):
         lenovo = candidate("Lenovo V15 Intel Core i5-1235U 8GB 512GB", url="https://www.flipkart.com/lenovo/p/itm9")
@@ -145,7 +218,7 @@ class CheckPricesTest(unittest.TestCase):
 
     def test_snippet_price_still_wins_first(self):
         snippet = "HP 15 fd0070TU Buy for ₹52,990 today"
-        [c], _, _ = check_prices([candidate(search_snippet=snippet)], lambda prompt: 52990)
+        [c], _, _ = check_prices([candidate(search_snippet=snippet, model_numbers=['fd0070tu'])], lambda prompt: 52990)
         self.assertEqual((c['price'], c['price_source']), (52990, 'search_snippet'))
 
 

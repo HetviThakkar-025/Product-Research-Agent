@@ -204,13 +204,13 @@ def model_numbers(product_name):
     Model-number-like tokens in a product name, e.g. RT38HG5A42S8HL, 82RK0085IN, fq5112tu.
     Requires 8+ chars with 2+ letters and 3+ digits, so CPU/GPU/RAM tokens (i5-1235U, RTX4050, 16GB) don't count.
     """
-    models = set()
-    for token in re.findall(r'[a-z0-9]+', product_name.lower()):
-        letters = sum(ch.isalpha() for ch in token)
-        digits = sum(ch.isdigit() for ch in token)
-        if len(token) >= 8 and letters >= 2 and digits >= 3 and not token.startswith(NON_MODEL_PREFIXES):
-            models.add(token)
-    return models
+    return {token for token in re.findall(r'[a-z0-9]+', product_name.lower()) if _is_model_token(token)}
+
+
+def _is_model_token(token):
+    letters = sum(ch.isalpha() for ch in token)
+    digits = sum(ch.isdigit() for ch in token)
+    return len(token) >= 8 and letters >= 2 and digits >= 3 and not token.startswith(NON_MODEL_PREFIXES)
 
 
 def _spec_tokens(text):
@@ -322,15 +322,64 @@ def find_search_snippet(source_url, snippets):
     return ''
 
 
-def extract_price_snippets(raw_content, window=80, max_snippets=5):
+# window searched around a ₹ amount for the product it belongs to (names come before prices on retail pages)
+PRICE_CONTEXT_BEFORE = 200
+PRICE_CONTEXT_AFTER = 50
+NAME_PREFIX_CHARS = 40
+
+
+def own_product_ids(candidate):
+    """Model numbers known to be the candidate's (name, dropped duplicates, own result title) plus its page's ASIN / itm id."""
+    ids = model_numbers(candidate['product_name']) | set(candidate.get('model_numbers', []))
+    page_id = re.search(r'/(?:dp|p)/([a-z0-9]+)$', normalize_product_url(candidate.get('source_url', '')))
+    if page_id:
+        ids.add(page_id.group(1))
+    return ids
+
+
+def attribute_prices(candidate, text):
     """
-    Pull small text windows around every ₹ price mention,
+    Keeps only the ₹ amounts in text that belong to this candidate, so prices of other products on the same
+    page (carousels, "similar items") are dropped. For each amount, the nearest model number in the window
+    (the closest one before it, else the first after) decides: the candidate's own -> kept, another -> rejected.
+    With no model number in the window, the amount is kept only if the start of the candidate's name is in it.
+    Returns (kept ₹ matches, rejected [(amount, reason)]).
+    """
+    own = own_product_ids(candidate)
+    name = _squash(candidate['product_name'])[:NAME_PREFIX_CHARS]
+    kept, rejected = [], []
+    for m in re.finditer(PRICE_RE, text or ''):
+        amounts = rupee_amounts(m.group())
+        if not amounts:
+            continue
+        start = max(0, m.start() - PRICE_CONTEXT_BEFORE)
+        window = text[start:m.end() + PRICE_CONTEXT_AFTER]
+        position = m.start() - start
+        mentions = [(w.start(), w.group()) for w in re.finditer(r'[a-z0-9]+', window.lower()) if _is_model_token(w.group())]
+        if mentions:
+            before = [token for pos, token in mentions if pos < position]
+            nearest = before[-1] if before else mentions[0][1]
+            if nearest in own:
+                kept.append(m)
+            else:
+                rejected.append((amounts.pop(), f"other model nearby ({nearest})"))
+        elif name and name in _squash(window):
+            kept.append(m)
+        else:
+            rejected.append((amounts.pop(), "product not named nearby"))
+    return kept, rejected
+
+
+def extract_price_snippets(raw_content, window=80, max_snippets=5, matches=None):
+    """
+    Pull small text windows around every ₹ price mention (or only around the given ₹ matches),
     instead of sending the entire page to the LLM.
     """
     if not raw_content:
         return ""
 
-    matches = list(re.finditer(PRICE_RE, raw_content))
+    if matches is None:
+        matches = list(re.finditer(PRICE_RE, raw_content))
     if not matches:
         return ""
 
@@ -383,6 +432,7 @@ def filter_hallucinated_candidates(candidates, raw_results):
 
 
 def extract_price(source_url):
+    """Full text of the candidate's own page (not just ₹ snippets), so prices can be checked against the product name."""
     if not is_product_page_url(source_url):
         print(
             f"Skipping price extraction, looks like a listing page: {source_url}")
@@ -401,8 +451,7 @@ def extract_price(source_url):
         print(f"Unexpected extract response shape for {source_url}: {str(result)[:300]}")
         return ""
 
-    raw_content = result['results'][0].get('raw_content', '') or ''
-    return extract_price_snippets(raw_content)
+    return result['results'][0].get('raw_content', '') or ''
 
 
 def search_price_fallback(product_name):
