@@ -59,6 +59,7 @@ The **sidebar** lists sessions newest first. Opening one reads the thread's last
 - `graph.py`: state schema, nodes, routing functions and `build_graph()`.
 - `tools.py`: Tavily search/extract wrappers, URL and listing filters, model-number parsing, price attribution, retries (`invoke_with_retry`), report ranking and headline.
 - `storage.py`: SQLite connection, `SqliteSaver` checkpointer, `sessions` table (`SessionStore`, `track_session`) and `load_saved_state`.
+- `tracing.py`: LangSmith tracing, on only with `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY`. Runs are named `product-research` and carry tags plus thread_id/query metadata; LLM chains (`Call A: clarify` … `Call F: fit`, `Search query rewrite`, `Report`) and retry waits have run names, so a trace reads node by node.
 - `prompts.py`: Groq models, structured-output schemas, prompts for Calls A–F and the report, and the intake chain.
 - `test_graph.py`: runs one live query, printing each node; saves report, summary and token counts per call type to `runs/`.
 - `tests/`: mocked unit tests (`python -m unittest discover -s tests`); no Groq or Tavily calls.

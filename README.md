@@ -63,7 +63,7 @@ venv\Scripts\activate      # Mac/Linux: source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the project root with your own API keys:
+Create a `.env` file in the project root with your own API keys (`.env.example` lists every setting):
 
 ```
 GROQ_API_KEY=your_key_here
@@ -76,6 +76,24 @@ Then run:
 ```bash
 streamlit run app.py
 ```
+
+---
+
+## Observability with LangSmith
+
+Tracing is optional and off by default. To turn it on, add these to `.env`:
+
+```
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=your_langsmith_key
+LANGSMITH_PROJECT=product-research-agent   # optional, this is the default
+```
+
+Without `LANGSMITH_API_KEY`, tracing stays off and the app runs exactly as before. The tests never send traces.
+
+Each search becomes one trace named `product-research`, tagged `streamlit` (or `test` for `test_graph.py` runs), with the thread_id and the first 100 characters of the query as metadata. Inside it you see each graph node (intake, search, extract_candidates, ...), the routing decisions (for example `route_after_search` sending a search without product pages back to `search`, skipping Call C), every LLM call by name (`Call A: clarify` to `Call F: fit`, `Search query rewrite`, `Report`) with its prompt, output, tokens and latency, the Tavily searches, and any `Groq rate-limit wait`.
+
+A trace contains your query, the prompts, the search results and page text, and the model outputs. API keys are not included.
 
 ---
 
@@ -98,6 +116,7 @@ graph.py      # LangGraph state graph: the nodes and routing of the 9-step flow
 tools.py      # Search, filtering, and verification utilities
 prompts.py    # LLM prompts and structured output schemas
 storage.py    # SQLite persistence: LangGraph checkpoints + the past-searches table
+tracing.py    # LangSmith tracing switch (env vars only, off without an API key)
 data/agent.db # Saved searches (created on first run, gitignored)
 test_graph.py # Runs one live query, printing each node; saves report + summary to runs/
 tests/        # Mocked unit tests (no API calls)

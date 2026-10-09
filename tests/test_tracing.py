@@ -218,5 +218,30 @@ class TraceNamesTest(unittest.TestCase):
         self.assertEqual(tracer.runs[wait["parent"]]["name"], "Call X")
 
 
+class TracePrivacyTest(unittest.TestCase):
+    def test_no_api_key_in_what_langsmith_would_receive(self):
+        """The real LangChainTracer with a mocked client: every create/update payload, searched for the key values."""
+        import json
+        from langchain_core.tracers.langchain import LangChainTracer, wait_for_all_tracers
+
+        client = mock.MagicMock()
+        handlers, search = test_token_load.answers()
+        fake = FakeGroq(handlers).install()
+        tavily = FakeTavily(search=search).install()
+        config = graph.make_config(run_name=agent.RUN_NAME, tags=["test"], metadata=trace_metadata("laptop"))
+        config["callbacks"] = [LangChainTracer(client=client, project_name="test")]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                graph.build_graph().invoke({"user_query": "laptop for coding under 60000"}, config=config)
+            wait_for_all_tracers()
+        finally:
+            fake.uninstall()
+            tavily.uninstall()
+        payload = json.dumps([call.kwargs for call in client.method_calls], default=str)
+        self.assertIn("Call C: candidates", payload)
+        for key in ("GROQ_API_KEY", "TAVILY_API_KEY"):
+            self.assertNotIn(os.environ[key], payload)
+
+
 if __name__ == "__main__":
     unittest.main()
