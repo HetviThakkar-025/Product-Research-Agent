@@ -14,6 +14,8 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("GROQ_API_KEY", "test-key")
 os.environ.setdefault("TAVILY_API_KEY", "test-key")
+# tests never send LangSmith traces, even when the developer's .env turns tracing on (.env does not override this)
+os.environ["LANGSMITH_TRACING"] = "false"
 # the app's SQLite file goes to a throwaway directory, never data/agent.db
 os.environ["AGENT_DB_PATH"] = os.path.join(tempfile.mkdtemp(prefix="agent-tests-"), "agent.db")
 

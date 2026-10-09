@@ -4,8 +4,10 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableParallel, RunnableBranch, RunnableLambda, RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+from tracing import configure_tracing
 
 load_dotenv()
+configure_tracing()  # LangSmith: on only with LANGSMITH_TRACING=true and LANGSMITH_API_KEY
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 # low reasoning keeps hidden reasoning tokens from eating the max_tokens budget
 REASONING_EFFORT = "low"
