@@ -93,6 +93,12 @@ Without `LANGSMITH_API_KEY`, tracing stays off and the app runs exactly as befor
 
 Each search becomes one trace named `product-research`, tagged `streamlit` (or `test` for `test_graph.py` runs), with the thread_id and the first 100 characters of the query as metadata. Inside it you see each graph node (intake, search, extract_candidates, ...), the routing decisions (for example `route_after_search` sending a search without product pages back to `search`, skipping Call C), every LLM call by name (`Call A: clarify` to `Call F: fit`, `Search query rewrite`, `Report`) with its prompt, output, tokens and latency, the Tavily searches, and any `Groq rate-limit wait`.
 
+![LangSmith trace step tree](docs/langsmith-trace.png)
+*The step tree for one search: each graph node with its timing.*
+
+![LangSmith LLM call](docs/langsmith-llm-call.png)
+*A single LLM call (`Call C: candidates`) with its input, output and token counts.*
+
 A trace contains your query, the prompts, the search results and page text, and the model outputs. API keys are not included.
 
 ---
