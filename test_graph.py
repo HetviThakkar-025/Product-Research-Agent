@@ -14,6 +14,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 from graph import build_graph, make_config, is_qualified
 from tools import is_product_page_url
+from tracing import trace_metadata
 
 SAMPLE_QUERY = "I want to buy a referigerator, budget 60000, family use"
 RUNS_DIR = Path(__file__).resolve().parent / "runs"
@@ -138,7 +139,8 @@ def main():
 
     query = sys.argv[1] if len(sys.argv) > 1 else SAMPLE_QUERY
     graph = build_graph()
-    config = make_config(progress_callback=lambda msg: print(f"    [progress] {msg}"))
+    config = make_config(progress_callback=lambda msg: print(f"    [progress] {msg}"),
+                         run_name="product-research-test", tags=["test"], metadata=trace_metadata(query))
     counter = LLMCallCounter()
     config["callbacks"] = [counter]
 

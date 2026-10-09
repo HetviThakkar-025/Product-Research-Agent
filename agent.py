@@ -1,10 +1,13 @@
 from graph import build_graph, make_config
 from tools import section_1_start
+from tracing import trace_metadata
 
 _graph = build_graph()
 
 # "custom" carries the progress/headline events that nodes send with get_stream_writer
 STREAM_MODES = ["updates", "messages", "custom"]
+# the root run's name in a LangSmith trace
+RUN_NAME = "product-research"
 
 
 def _result(final_state):
@@ -31,7 +34,7 @@ def run_pipeline(user_query, progress_callback=None):
     return _result(final_state)
 
 
-def run_pipeline_stream(user_query, previous_question=None, graph=None, thread_id=None):
+def run_pipeline_stream(user_query, previous_question=None, graph=None, thread_id=None, tags=None):
     """
     Same pipeline as run_pipeline, streamed. Yields, in order of arrival:
       {"type": "progress", "text": str}  the progress wording nodes already use, plus Groq rate-limit waits
@@ -42,6 +45,7 @@ def run_pipeline_stream(user_query, previous_question=None, graph=None, thread_i
     previous_question is the clarifying question user_query answers, if any (stops the same question being re-asked).
     graph/thread_id: the app passes its checkpointed graph and the search's thread, so the state is saved per thread;
     without them the module's plain graph runs with nothing saved.
+    tags label the LangSmith trace, which also gets the thread_id and the start of user_query as metadata.
     Exceptions (e.g. DailyQuotaExceeded) propagate to the caller.
     """
     state = {"user_query": user_query}
@@ -49,7 +53,9 @@ def run_pipeline_stream(user_query, previous_question=None, graph=None, thread_i
         state["previous_question"] = previous_question
     held_back, report_started = "", False  # report text is held until its section 1 heading appears
     graph = graph or _graph
-    for mode, chunk in graph.stream(dict(state), config=make_config(thread_id=thread_id), stream_mode=STREAM_MODES):
+    config = make_config(thread_id=thread_id, run_name=RUN_NAME, tags=tags,
+                         metadata=trace_metadata(user_query, thread_id))
+    for mode, chunk in graph.stream(dict(state), config=config, stream_mode=STREAM_MODES):
         if mode == "custom":
             yield chunk
         elif mode == "messages":

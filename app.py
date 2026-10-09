@@ -7,6 +7,9 @@ from graph import build_graph
 from storage import DB_PATH, SessionStore, load_saved_state, make_checkpointer, open_connection, track_session
 from tools import DailyQuotaExceeded
 
+# labels each search's LangSmith trace (only sent when tracing is on, see tracing.py)
+TRACE_TAGS = ["streamlit", "product-research"]
+
 try:
     if "GROQ_API_KEY" in st.secrets:
         os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
@@ -157,7 +160,7 @@ if user_input:
             events = track_session(
                 sessions, thread_id, st.session_state.first_message,
                 run_pipeline_stream(st.session_state.context, previous_question=previous_question,
-                                    graph=graph, thread_id=thread_id))
+                                    graph=graph, thread_id=thread_id, tags=TRACE_TAGS))
             headline, first_token = None, ""
             with status_box:
                 for event in events:

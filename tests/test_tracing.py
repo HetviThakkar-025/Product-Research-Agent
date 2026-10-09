@@ -2,6 +2,8 @@
 LangSmith tracing: off without a key (no tracer, no network), on with LANGSMITH_TRACING=true and a key.
 No test reaches LangSmith: the "on" side only checks the switch, the run config uses a recording tracer.
 """
+import contextlib
+import io
 import logging
 import os
 import unittest
@@ -10,12 +12,18 @@ from unittest import mock
 
 import langsmith
 import requests
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.tracers.context import _tracing_v2_is_enabled
 from langsmith import utils as ls_utils
 
 import support  # noqa: F401  (network guard, tracing forced off)
 
+import agent
+import graph
+import test_app
 import test_stream
+import test_token_load
+from support import FakeGroq, FakeTavily
 from tracing import DEFAULT_PROJECT, configure_tracing, trace_metadata
 
 
@@ -79,6 +87,98 @@ class TraceMetadataTest(unittest.TestCase):
 
     def test_no_thread(self):
         self.assertEqual(trace_metadata("fridge"), {"query": "fridge"})
+
+
+class RecordingTracer(BaseCallbackHandler):
+    """Stands in for the LangSmith tracer: records every run's name, parent, tags and metadata."""
+
+    def __init__(self):
+        self.runs = {}  # run_id -> {"name", "parent", "tags", "metadata", "kind"}
+
+    def _record(self, kind, serialized, run_id, parent_run_id, tags, metadata, name):
+        if name is None and serialized:
+            name = serialized.get("name") or (serialized.get("id") or ["?"])[-1]
+        self.runs[run_id] = {"name": name, "parent": parent_run_id, "tags": tags or [],
+                             "metadata": metadata or {}, "kind": kind}
+
+    def on_chain_start(self, serialized, inputs, *, run_id, parent_run_id=None, tags=None, metadata=None, **kwargs):
+        self._record("chain", serialized, run_id, parent_run_id, tags, metadata, kwargs.get("name"))
+
+    def on_chat_model_start(self, serialized, messages, *, run_id, parent_run_id=None, tags=None, metadata=None,
+                            **kwargs):
+        self._record("llm", serialized, run_id, parent_run_id, tags, metadata, kwargs.get("name"))
+
+    def roots(self):
+        return [r for r in self.runs.values() if r["parent"] is None]
+
+    def names(self):
+        return [r["name"] for r in self.runs.values()]
+
+
+def traced_run(product_pages=True):
+    """A full mocked graph run, labelled the way the app labels it, with RecordingTracer attached."""
+    handlers, search = test_token_load.answers(product_pages)
+    fake = FakeGroq(handlers).install()
+    tavily = FakeTavily(search=search).install()
+    tracer = RecordingTracer()
+    config = graph.make_config(thread_id=None, run_name=agent.RUN_NAME, tags=["streamlit", "product-research"],
+                               metadata=trace_metadata("laptop for coding under 60000", "thread-1"))
+    config["callbacks"] = [tracer]
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            graph.build_graph().invoke({"user_query": "laptop for coding under 60000"}, config=config)
+    finally:
+        fake.uninstall()
+        tavily.uninstall()
+    return tracer
+
+
+class RunConfigTest(unittest.TestCase):
+    def test_make_config_adds_labels_only_when_given(self):
+        self.assertNotIn("tags", graph.make_config())
+        self.assertNotIn("metadata", graph.make_config())
+        self.assertNotIn("run_name", graph.make_config())
+        config = graph.make_config(thread_id="t", run_name="r", tags=["a"], metadata={"query": "q"})
+        self.assertEqual((config["run_name"], config["tags"], config["metadata"]), ("r", ["a"], {"query": "q"}))
+        self.assertEqual(config["configurable"], {"thread_id": "t"})
+
+    def test_run_pipeline_stream_labels_the_run(self):
+        seen = {}
+
+        class ConfigGraph:
+            def stream(self, inputs, config=None, stream_mode=None):
+                seen.update(config)
+                return iter([("updates", {"intake": {"clarify_question": "Budget?"}})])
+
+        list(agent.run_pipeline_stream("q" * 120, graph=ConfigGraph(), thread_id="thread-9", tags=["x"]))
+        self.assertEqual(seen["run_name"], agent.RUN_NAME)
+        self.assertEqual(seen["tags"], ["x"])
+        self.assertEqual(seen["metadata"], {"query": "q" * 100, "thread_id": "thread-9"})
+        self.assertEqual(seen["configurable"], {"thread_id": "thread-9"})
+
+    def test_app_passes_its_tags(self):
+        calls = []
+
+        def stream(user_query, previous_question=None, **kwargs):
+            calls.append(kwargs)
+            yield {"type": "final", "status": "clarify", "question": "Budget?"}
+
+        at = test_app.run_app(stream, query="I want a fridge")
+        self.assertFalse(at.exception)
+        self.assertEqual(calls[0]["tags"], ["streamlit", "product-research"])
+        self.assertTrue(calls[0]["thread_id"])
+
+    def test_root_run_carries_name_tags_and_metadata(self):
+        tracer = traced_run()
+        [root] = tracer.roots()
+        self.assertEqual(root["name"], agent.RUN_NAME)
+        self.assertEqual(root["tags"], ["streamlit", "product-research"])
+        self.assertEqual(root["metadata"]["query"], "laptop for coding under 60000")
+        self.assertEqual(root["metadata"]["thread_id"], "thread-1")
+        # tags and metadata are inherited, so every node and LLM call can be filtered by them
+        for run in tracer.runs.values():
+            self.assertIn("streamlit", run["tags"])
+            self.assertEqual(run["metadata"].get("thread_id"), "thread-1")
 
 
 if __name__ == "__main__":

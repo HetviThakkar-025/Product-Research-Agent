@@ -522,11 +522,21 @@ def build_graph(checkpointer=None):
     return builder.compile(checkpointer=checkpointer)
 
 
-def make_config(progress_callback=None, thread_id=None):
-    """Run config; thread_id selects the checkpointer thread. The callback is only added when given (it isn't serializable)."""
+def make_config(progress_callback=None, thread_id=None, run_name=None, tags=None, metadata=None):
+    """
+    Run config; thread_id selects the checkpointer thread. The callback is only added when given (it isn't serializable).
+    run_name/tags/metadata label the run's LangSmith trace; they don't change what the graph does.
+    """
     configurable = {}
     if progress_callback:
         configurable["progress_callback"] = progress_callback
     if thread_id:
         configurable["thread_id"] = thread_id
-    return {"recursion_limit": RECURSION_LIMIT, "configurable": configurable}
+    config = {"recursion_limit": RECURSION_LIMIT, "configurable": configurable}
+    if run_name:
+        config["run_name"] = run_name
+    if tags:
+        config["tags"] = list(tags)
+    if metadata:
+        config["metadata"] = dict(metadata)
+    return config
