@@ -320,16 +320,17 @@ never suggest, estimate, or imply what the value probably is, even based on the 
                      'recommendation_headline', 'gap_advice']
 )
 
-report_chain = prompt7 | llm_report | parser
+# run_name on each LLM chain: the step's name in a LangSmith trace (Call A..F, Report)
+report_chain = (prompt7 | llm_report | parser).with_config(run_name="Report")
 
-call_a_chain = prompt1 | str_model_call_a
+call_a_chain = (prompt1 | str_model_call_a).with_config(run_name="Call A: clarify")
 
 branch_chain = RunnableBranch(
     (lambda x: x['status'] == "unclear",
      RunnableLambda(lambda x: x['question'])),
-    (lambda x: x['status'] == "clear", prompt2 | str_model_call_b),
+    (lambda x: x['status'] == "clear", (prompt2 | str_model_call_b).with_config(run_name="Call B: requirements")),
     RunnableLambda(lambda x: {"error": "Could not determine status", "raw": x})
-)
+).with_config(run_name="Clarify question or Call B")
 
 # Call B also needs the user's own words, which Call A's output does not carry
 final_chain = (RunnablePassthrough.assign(call_a=call_a_chain)

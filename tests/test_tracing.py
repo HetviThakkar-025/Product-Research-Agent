@@ -13,6 +13,7 @@ from unittest import mock
 import langsmith
 import requests
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.runnables import RunnableLambda
 from langchain_core.tracers.context import _tracing_v2_is_enabled
 from langsmith import utils as ls_utils
 
@@ -22,7 +23,9 @@ import agent
 import graph
 import test_app
 import test_stream
+import test_retry
 import test_token_load
+import tools
 from support import FakeGroq, FakeTavily
 from tracing import DEFAULT_PROJECT, configure_tracing, trace_metadata
 
@@ -115,9 +118,15 @@ class RecordingTracer(BaseCallbackHandler):
         return [r["name"] for r in self.runs.values()]
 
 
-def traced_run(product_pages=True):
+def traced_run(product_pages=True, spec_results=False):
     """A full mocked graph run, labelled the way the app labels it, with RecordingTracer attached."""
     handlers, search = test_token_load.answers(product_pages)
+    if spec_results:  # the spec search finds a page, so Call D runs too
+        retail_search = search
+        search = lambda query, domains: (  # noqa: E731
+            {"results": [{"url": "https://www.91mobiles.com/hp-15", "title": "HP 15 specs",
+                          "content": "i5-1235U 8GB RAM", "score": 0.9}]}
+            if domains == tools.SPEC_DOMAINS else retail_search(query, domains))
     fake = FakeGroq(handlers).install()
     tavily = FakeTavily(search=search).install()
     tracer = RecordingTracer()
@@ -179,6 +188,34 @@ class RunConfigTest(unittest.TestCase):
         for run in tracer.runs.values():
             self.assertIn("streamlit", run["tags"])
             self.assertEqual(run["metadata"].get("thread_id"), "thread-1")
+
+
+class TraceNamesTest(unittest.TestCase):
+    def test_nodes_and_llm_calls_have_readable_names(self):
+        names = traced_run(spec_results=True).names()
+        for name in ("intake", "search", "extract_candidates", "verify_specs", "check_prices", "score_fit",
+                     "merge", "report", "Call A: clarify", "Call B: requirements", "Search query rewrite",
+                     "Call C: candidates", "Call D: specs", "Call E: price", "Call F: fit", "Report"):
+            self.assertIn(name, names)
+
+    def test_skipped_call_c_shows_as_search_routed_back_to_search(self):
+        tracer = traced_run(product_pages=False)
+        names = tracer.names()
+        self.assertNotIn("Call C: candidates", names)
+        self.assertNotIn("extract_candidates", names)
+        self.assertIn("route_after_search", names)
+
+    def test_rate_limit_wait_is_a_named_step_under_the_retried_call(self):
+        clock = test_retry.FakeClock()
+        chain = test_retry.Chain(clock, [test_retry.rate_limit(6.105)])
+        tracer = RecordingTracer()
+        step = RunnableLambda(lambda _: tools.invoke_with_retry(chain, {}), name="Call X")
+        with mock.patch.object(tools, "time", clock), mock.patch.object(tools, "emit_progress"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(step.invoke({}, config={"callbacks": [tracer]}), "ok")
+        self.assertEqual(clock.sleeps, [7.105])  # same wait as before
+        [wait] = [r for r in tracer.runs.values() if r["name"] == "Groq rate-limit wait"]
+        self.assertEqual(tracer.runs[wait["parent"]]["name"], "Call X")
 
 
 if __name__ == "__main__":

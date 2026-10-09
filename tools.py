@@ -7,6 +7,7 @@ from langchain_tavily import TavilySearch, TavilyExtract
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnableLambda
 from langgraph.config import get_stream_writer
 from prompts import MODEL, REASONING_EFFORT
 
@@ -67,6 +68,10 @@ MAX_RETRY_WAIT_SECONDS = 65
 # used up, so from a call's second 429 on we wait out the rest of the minute since its first 429
 TPM_WINDOW_SECONDS = 60
 
+# the retry waits run as named steps, so they show up in a LangSmith trace next to the retried call
+_rate_limit_wait = RunnableLambda(lambda seconds: time.sleep(seconds), name="Groq rate-limit wait")
+_error_backoff_wait = RunnableLambda(lambda seconds: time.sleep(seconds), name="Groq error backoff wait")
+
 
 def parse_retry_after(error):
     """Seconds Groq asks us to wait, from 'try again in 1m2.5s' / '14.6s' / '450ms', else the retry-after header."""
@@ -125,7 +130,7 @@ def invoke_with_retry(chain, inputs, max_retries=3):
                 print(f"Waiting {wait_time:.1f}s before retry {rate_limit_retries}/{max_retries}...")
                 # streamed to the UI, so a long rate-limit wait doesn't look frozen
                 emit_progress(f"Waiting {wait_time:.0f}s for Groq rate limit, retry {rate_limit_retries}/{max_retries}")
-                time.sleep(wait_time)
+                _rate_limit_wait.invoke(wait_time)
 
             elif is_tool_call_error and status_code in (400, None):
                 # bad/truncated/invalid tool call from the model — waiting won't help, just regenerate
@@ -145,7 +150,7 @@ def invoke_with_retry(chain, inputs, max_retries=3):
                         f"Groq API error persisted after {max_retries} retries. Last error: {error_text}") from e
                 wait_time = min(2 ** (other_retries - 1), 10)
                 print(f"Waiting {wait_time}s before retry...")
-                time.sleep(wait_time)
+                _error_backoff_wait.invoke(wait_time)
 
 
 # words in a shopping request that are not product specs (budget amounts are removed separately)
@@ -222,7 +227,7 @@ def build_query(call_b_result, include_negotiable=True, user_query=""):
         for key, value in negotiable_items:
             specs[key] = value
 
-    chain = prompt1 | llm | parser
+    chain = (prompt1 | llm | parser).with_config(run_name="Search query rewrite")
     rewrite = invoke_with_retry(chain, {"specs": specs}).strip()
     user_words = request_keywords(user_query, category)
     if not rewrite:

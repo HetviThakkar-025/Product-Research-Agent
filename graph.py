@@ -151,7 +151,7 @@ def search(state, config):
 
 def extract_candidates(state, config):
     result = state["search_results"]
-    call_c_chain = prompt3 | str_model_call_c
+    call_c_chain = (prompt3 | str_model_call_c).with_config(run_name="Call C: candidates")
     candidates_result = invoke_with_retry(call_c_chain, {
         "required_specs": state["requirements"]['non_negotiable_specs'],
         "raw_results": result,
@@ -196,7 +196,7 @@ def verify_specs(state, config):
         follow_up_results = get_official_specs(candidate["product_name"])
 
         if follow_up_results['results']:
-            call_d_chain = prompt4 | str_model_call_d
+            call_d_chain = (prompt4 | str_model_call_d).with_config(run_name="Call D: specs")
             newspecs = invoke_with_retry(call_d_chain, {
                 'product_name': candidate["product_name"],
                 'known_specs': candidate["known_specs"],
@@ -287,7 +287,7 @@ def _price_from_snippets(product_name, sources):
     the ₹ amounts attributed to the candidate in a source, so the LLM can never invent one or pick another product's.
     Returns (E result with price possibly nulled, url the price came from).
     """
-    call_e_chain = prompt5 | str_model_call_e
+    call_e_chain = (prompt5 | str_model_call_e).with_config(run_name="Call E: price")
     price_result = invoke_with_retry(call_e_chain, {
         'product_name': product_name,
         'page_content': "\n---\n".join(snippets for _, snippets, _ in sources)
@@ -364,7 +364,7 @@ def score_fit(state, config):
     new_candidates = copy.deepcopy(state["new_candidates"])
 
     _log(config, f"Scoring fit for {len(new_candidates)} candidate(s)...")
-    call_f_chain = prompt6 | str_model_call_f
+    call_f_chain = (prompt6 | str_model_call_f).with_config(run_name="Call F: fit")
     for candidate in new_candidates:
         if 'fit_score' in candidate:
             continue
